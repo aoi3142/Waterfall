@@ -128,8 +128,10 @@ class Watermarker:
                 cumulative_token_count[i, x] += 1
         return cumulative_token_count
     
-    def verify(self, text, id = None):
+    def verify(self, text, id = None, return_counts = False):
         tokens = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"][0]
         cumulative_token_count = self.get_cumulative_token_count(tokens, id = id)
         res = self.q(cumulative_token_count)
+        if return_counts:
+            return res, cumulative_token_count.sum(axis=1)
         return res

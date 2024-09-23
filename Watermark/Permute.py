@@ -3,7 +3,7 @@ import psutil
 from collections import OrderedDict
 
 class LRUCache:
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int = 1000):
         self.cache = OrderedDict()
         self.capacity = capacity
 
@@ -25,10 +25,11 @@ class LRUCache:
             self.cache.popitem(last=False)
 
 class Permute:
+    permutations = LRUCache()
     def __init__(self, N):
         self.N = N
-        cache_size = int(psutil.virtual_memory().total / 10 / N / 8) # 10% of memory: vocab_size * 8 bytes per long
-        self.permutations = LRUCache(cache_size)
+        cache_size = int(psutil.virtual_memory().total / 100 * 0.2 / N / 8) # 10% of memory: vocab_size * 8 bytes per long
+        self.permutations.capacity = cache_size
 
     def get_permutation(self, prev_tok, id = None, cache = False):
         assert not (id is None), "id must be provided to permute"
