@@ -1,4 +1,4 @@
-from Watermark.WatermarkingFn import WatermarkingFn
+from .WatermarkingFn import WatermarkingFn
 import numpy as np
 
 class WatermarkingFnSquare(WatermarkingFn):

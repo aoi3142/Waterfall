@@ -1,8 +1,7 @@
 from transformers import LogitsProcessor
 import numpy as np
 import torch
-from Watermark.WatermarkingFn import WatermarkingFn
-from Watermark.Permute import Permute
+from .Permute import Permute
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self, 
                  N = 32000,     # Vocab size
