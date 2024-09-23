@@ -5,6 +5,7 @@ import numpy as np
 from Watermark.WatermarkingFnFourier import WatermarkingFnFourier
 from Watermark.WatermarkingFnSquare import WatermarkingFnSquare
 from Watermark.WatermarkerBase import Watermarker
+from sentence_transformers import SentenceTransformer
 
 prompt = (
     "Paraphrase the user provided text while preserving semantic similarity. "
@@ -13,7 +14,7 @@ prompt = (
 )
 pre_paraphrased = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
-def watermark_and_evaluate(T_o, seed=42):
+def watermark_and_evaluate(T_o):
     print(f"\nOriginal text T_o:\n\n{T_o}\n")
 
     # Generate watermarked text
@@ -22,8 +23,21 @@ def watermark_and_evaluate(T_o, seed=42):
             {"role":"system", "content":prompt},
             {"role":"user", "content":T_o},
         ], tokenize=False, add_generation_prompt = True) + f"{pre_paraphrased}\n\n"
-    torch.manual_seed(seed)
-    watermarked = watermarker.generate(paraphrasing_prompt)
+    watermarked = watermarker.generate(
+        paraphrasing_prompt, 
+        return_scores=True,
+        max_new_tokens=int(len(paraphrasing_prompt) * 1.5),
+        do_sample=False, temperature=None, top_p=None,
+        num_beams=8, num_beam_groups=4, num_return_sequences=8, diversity_penalty = 0.5
+        )
+    
+    # Select best paraphrasing based on q_score and semantic similarity
+    sts_scores = sts_model.encode([T_o, *watermarked["text"]], convert_to_tensor=True)
+    cos_sim = torch.nn.functional.cosine_similarity(sts_scores[0], sts_scores[1:], dim=1).cpu()
+    selection_score = cos_sim + watermarked["q_score"]
+    selection = torch.argmax(selection_score)
+
+    watermarked = watermarked["text"][selection]
 
     print(f"\nWatermarked text T_w:\n\n{watermarked}\n")
 
@@ -37,8 +51,11 @@ def watermark_and_evaluate(T_o, seed=42):
     q = res[k_p-1]
     print(f"Verification score of T_w: \033[92m{q:.4f}\033[0m")
 
+    print(f"\nSTS score of T_w         : \033[94m{cos_sim[selection].item():.4f}\033[0m")
+
     # Extract from watermarked text
-    print(f"\nExtracted k_p from T_w   : \033[96m{np.argmax(res)+1}\033[0m\n")
+    print(f"\nWatermarking k_p         : \033[95m{k_p}\033[0m")
+    print(  f"Extracted k_p from T_w   : \033[96m{np.argmax(res)+1}\033[0m\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
@@ -78,5 +95,7 @@ if __name__ == "__main__":
         ).to(args.device)
 
     watermarker = Watermarker(model, tokenizer, id, kappa, k_p, watermarkingFnClass=watermarkingFnClass)
+
+    sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=args.device)
 
     watermark_and_evaluate(T_o)

@@ -21,7 +21,7 @@ class WatermarkingFnFourier(WatermarkingFn):
     def q(self, bins):
         if bins.ndim == 1:
             bins = bins[None,:]
-        fft_res = np.fft.rfft(bins / bins.sum(axis=1))[:,1:-1]
+        fft_res = np.fft.rfft(bins / bins.sum(axis=1)[:,None])[:,1:-1]
         fft_res = np.concatenate((np.real(fft_res), np.imag(fft_res)), axis=1)
         fft_res *= self.scaling_factor
 
