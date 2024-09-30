@@ -9,7 +9,7 @@ class LRUCache:
 
     def get(self, key: int) -> int:
         if key not in self.cache:
-            return -1
+            return None
         else:
             # Move the accessed item to the end of the OrderedDict to mark it as recently used.
             self.cache.move_to_end(key)
@@ -33,10 +33,10 @@ class Permute:
 
     def get_permutation(self, prev_tok, id = None, cache = False):
         assert not (id is None), "id must be provided to permute"
-        key = (id, *prev_tok)
+        key = (id, *prev_tok.cpu().numpy())
         if cache:
             permutation = self.permutations.get(key)
-            if permutation == -1:
+            if permutation is None:
                 permutation = np.random.RandomState(key).permutation(self.N)
                 self.permutations.put(key, permutation)
         else:

@@ -46,7 +46,7 @@ class PerturbationProcessor(LogitsProcessor):
         if self.init_token_count + self.n_gram - 1 > input_ids.shape[1]:
             return scores
 
-        prev_tokens = input_ids[:,-self.n_gram+1:].cpu()
+        prev_tokens = input_ids[:,-self.n_gram+1:]
         permutations = [self.get_permutation(prev_tokens[i,:]) for i in range(prev_tokens.shape[0])]
         scores[:,:self.N] += torch.tensor(self.phi[permutations], device=scores.device)
         return scores
