@@ -1,4 +1,4 @@
 torch
 transformers
 numpy
-SentenceTransformer
+sentence-transformers
