@@ -37,5 +37,5 @@ class WatermarkingFnSquare(WatermarkingFn):
         nomalized_bins = bins / bins.sum(axis = 1)[:, None]
         res = np.zeros((nomalized_bins.shape[0], len(self.phis)))
         for i, k_p in enumerate(self.phis):
-            res[:,i] = np.dot(nomalized_bins, k_p/self.kappa)
+            res[:,i] = np.dot(nomalized_bins, k_p/(self.kappa if self.kappa != 0 else 1))
         return res
