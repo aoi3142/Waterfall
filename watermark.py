@@ -28,7 +28,10 @@ def watermark_and_evaluate(T_o):
         return_scores=True,
         max_new_tokens=int(len(paraphrasing_prompt) * 1.5),
         do_sample=False, temperature=None, top_p=None,
-        num_beams=8, num_beam_groups=4, num_return_sequences=8, diversity_penalty = 0.5
+        num_beams=args.num_beam_groups * args.beams_per_group, 
+        num_beam_groups=args.num_beam_groups, 
+        num_return_sequences=args.num_beam_groups * args.beams_per_group, 
+        diversity_penalty = 0.5,
         )
     
     # Select best paraphrasing based on q_score and semantic similarity
@@ -65,12 +68,14 @@ if __name__ == "__main__":
             help='kappa: watermarking strength')
     parser.add_argument('--k_p', default=1, type=int,
             help="k_p: Perturbation key")
-    parser.add_argument('--model', default='meta-llama/Llama-2-13b-chat-hf', type=str,
+    parser.add_argument('--model', default='meta-llama/Llama-3.1-8B-Instruct', type=str,
             help="model")
     parser.add_argument('--T_o', default='Protecting intellectual property (IP) of text such as articles and code is increasingly important, especially as sophisticated attacks become possible, such as paraphrasing by large language models (LLMs) or even unauthorized training of LLMs on copyrighted text to infringe such IP. However, existing text watermarking methods are not robust enough against such attacks nor scalable to millions of users for practical implementation.',
             type=str, help="original_text")
     parser.add_argument('--watermark_fn', default='fourier', type=str)
     parser.add_argument('--device', default='cuda', type=str)
+    parser.add_argument('--num_beam_groups', default=4, type=int)
+    parser.add_argument('--beams_per_group', default=2, type=int)
 
     args = parser.parse_args()
 
@@ -91,8 +96,9 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path, 
-        torch_dtype=torch.float16,
-        ).to(args.device)
+        torch_dtype=torch.bfloat16,
+        device_map=args.device,
+        )
 
     watermarker = Watermarker(model, tokenizer, id, kappa, k_p, watermarkingFnClass=watermarkingFnClass)
 
