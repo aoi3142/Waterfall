@@ -3,3 +3,5 @@ transformers
 numpy
 sentence-transformers
 accelerate
+scipy
+tqdm

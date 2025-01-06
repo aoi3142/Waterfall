@@ -1,5 +1,7 @@
-from .WatermarkingFn import WatermarkingFn
+from .WatermarkingFn import *
 import numpy as np
+from scipy.fft import rfft
+from scipy.sparse import isspmatrix
 
 class WatermarkingFnFourier(WatermarkingFn):
     def __init__(self, id = 0, k_p = 1, N = 32000, kappa = 1):
@@ -16,15 +18,15 @@ class WatermarkingFnFourier(WatermarkingFn):
             self.phi = np.sin(np.arange(self.N)/self.N*2*np.pi*freq)
         self.phi *= self.kappa
 
-        self.scaling_factor = np.ones((self.N//2 - 1)*2)
+        self.scaling_factor = 1
 
-    def q(self, bins):
-        if bins.ndim == 1:
-            bins = bins[None,:]
-        bins_sum = bins.sum(axis=1)[:,None]
-        bins_sum[bins_sum == 0] = 1
-        fft_res = np.fft.rfft(bins / bins_sum)[:,1:-1]
-        fft_res = np.concatenate((np.real(fft_res), np.imag(fft_res)), axis=1)
-        fft_res *= self.scaling_factor
-
-        return fft_res
+    def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if isspmatrix(bins):
+            bins = bins.todense()
+        q = rfft(bins, axis=-1)[:,1:-1].astype(np.complex64)
+        q = np.concatenate((np.real(q), np.imag(q)), axis=1)
+        q *= self.scaling_factor
+        k_p_strength = q[:,np.array(k_p)-1]
+        k_p_ranking = (q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)
+        k_p_extracted = np.argmax(q, axis=-1) + 1
+        return k_p_strength, k_p_ranking, k_p_extracted

@@ -6,6 +6,9 @@ from Watermark.WatermarkingFnFourier import WatermarkingFnFourier
 from Watermark.WatermarkingFnSquare import WatermarkingFnSquare
 from Watermark.WatermarkerBase import Watermarker
 from sentence_transformers import SentenceTransformer
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 prompt = (
     "Paraphrase the user provided text while preserving semantic similarity. "
@@ -14,7 +17,7 @@ prompt = (
 )
 pre_paraphrased = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
-def watermark_and_evaluate(T_o):
+def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2):
     print(f"\nOriginal text T_o:\n\n{T_o}\n")
 
     # Generate watermarked text
@@ -25,12 +28,12 @@ def watermark_and_evaluate(T_o):
         ], tokenize=False, add_generation_prompt = True) + f"{pre_paraphrased}\n\n"
     watermarked = watermarker.generate(
         paraphrasing_prompt, 
-        return_scores=True,
-        max_new_tokens=int(len(paraphrasing_prompt) * 1.5),
-        do_sample=False, temperature=None, top_p=None,
-        num_beams=args.num_beam_groups * args.beams_per_group, 
-        num_beam_groups=args.num_beam_groups, 
-        num_return_sequences=args.num_beam_groups * args.beams_per_group, 
+        return_scores = True,
+        max_new_tokens = int(len(paraphrasing_prompt) * 1.5),
+        do_sample = False, temperature=None, top_p=None,
+        num_beams = num_beam_groups * beams_per_group, 
+        num_beam_groups = num_beam_groups, 
+        num_return_sequences = num_beam_groups * beams_per_group, 
         diversity_penalty = 0.5,
         )
     
@@ -40,25 +43,26 @@ def watermark_and_evaluate(T_o):
     selection_score = cos_sim + watermarked["q_score"]
     selection = torch.argmax(selection_score)
 
-    watermarked = watermarked["text"][selection]
+    T_w = watermarked["text"][selection]
 
-    print(f"\nWatermarked text T_w:\n\n{watermarked}\n")
+    print(f"\nWatermarked text T_w:\n\n{T_w}\n")
 
-    # Verify on original text
-    res = watermarker.verify(T_o)[0]
-    q = res[k_p-1]
-    print(f"Verification score of T_o: \033[93m{q:.4f}\033[0m")
+    # Verify on original and watermarked text
+    verify_results = watermarker.verify([T_o, T_w], id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
+    q_score = verify_results["q_score"]
+    k_p_extracted = verify_results["k_p_extracted"]
 
-    # Verify on watermarked text
-    res = watermarker.verify(watermarked)[0]
-    q = res[k_p-1]
-    print(f"Verification score of T_w: \033[92m{q:.4f}\033[0m")
+    # Original text
+    print(f"Verification score of T_o: \033[93m{q_score[0,0,0]:.4f}\033[0m")
 
-    print(f"\nSTS score of T_w         : \033[94m{cos_sim[selection].item():.4f}\033[0m")
+    # Watermarked text
+    print(f"Verification score of T_w: \033[92m{q_score[1,0,0]:.4f}\033[0m\n")
+
+    print(f"STS score of T_w         : \033[94m{cos_sim[selection].item():.4f}\033[0m\n")
 
     # Extract from watermarked text
-    print(f"\nWatermarking k_p         : \033[95m{k_p}\033[0m")
-    print(  f"Extracted k_p from T_w   : \033[96m{np.argmax(res)+1}\033[0m\n")
+    print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
+    print(f"Extracted k_p from T_w   : \033[96m{k_p_extracted[1,0]}\033[0m\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
@@ -104,4 +108,4 @@ if __name__ == "__main__":
 
     sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=args.device)
 
-    watermark_and_evaluate(T_o)
+    watermark_and_evaluate(T_o, id, k_p, args.num_beam_groups, args.beams_per_group)

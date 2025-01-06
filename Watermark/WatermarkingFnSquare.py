@@ -1,4 +1,4 @@
-from .WatermarkingFn import WatermarkingFn
+from .WatermarkingFn import *
 import numpy as np
 
 class WatermarkingFnSquare(WatermarkingFn):
@@ -20,7 +20,7 @@ class WatermarkingFnSquare(WatermarkingFn):
             self.k_N += 1
         assert (k_p > 0) and (k_p < (self.k_N * 2)), f"k_p {k_p} larger than available number of fns {self.k_N*2-1}"
 
-        self.phis = [None] * (self.k_N*2-1)
+        self.phis = np.empty((self.k_N*2-1, self.N), dtype=np.float32)
         for i in range(self.k_N*2-1):
             k_p = i+1
             if k_p <= self.k_N:
@@ -31,11 +31,12 @@ class WatermarkingFnSquare(WatermarkingFn):
 
         self.phi = self.phis[self.k_p-1]
 
-    def q(self, bins):
-        if bins.ndim == 1:
-            bins = bins[None,:]
-        nomalized_bins = bins / bins.sum(axis = 1)[:, None]
-        res = np.zeros((nomalized_bins.shape[0], len(self.phis)))
-        for i, k_p in enumerate(self.phis):
-            res[:,i] = np.dot(nomalized_bins, k_p/(self.kappa if self.kappa != 0 else 1))
-        return res
+        self.scaling_factor = 1 / self.kappa
+
+    def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        q = bins.dot(self.phis.T)
+        q *= self.scaling_factor
+        k_p_strength = q[:,np.array(k_p)-1]
+        k_p_ranking = (q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)
+        k_p_extracted = np.argmax(q, axis=-1) + 1
+        return k_p_strength, k_p_ranking, k_p_extracted
