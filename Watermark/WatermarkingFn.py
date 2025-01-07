@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool
+import os
 from functools import partial
 from typing import List, Tuple
 from scipy.sparse import spmatrix
@@ -29,16 +30,16 @@ class WatermarkingFn:
         bins_sum[bins_sum == 0] = 1
         batch_range = range(0, bins.shape[0], batch)
         if use_tqdm:
-            batch_range = tqdm(batch_range, desc="Preparing batches for q", leave=False)
+            batch_range = tqdm(batch_range, desc="Preparing batches for q")
         batched = [bins[i:i+batch] / bins_sum[i:i+batch] for i in batch_range]
-        with Pool() as p:
+        with Pool(len(os.sched_getaffinity(0))-1) as p:
             res = p.imap(partial(self._q, k_p=k_p), batched)
             if use_tqdm:
                 res_ = []
-                with tqdm(total=bins.shape[0], desc="Calculating dot product", leave=False) as pbar:
-                    for r in res:
+                with tqdm(total=bins.shape[0], desc="Calculating dot product") as pbar:
+                    for i, r in enumerate(res):
                         res_.append(r)
-                        pbar.update(len(r))
+                        pbar.update(batched[i].shape[0])
                 res = res_
             else:
                 res = list(res)

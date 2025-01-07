@@ -159,7 +159,7 @@ class Watermarker:
                     key_index_dict[key].add(t)
 
         # Generate permutations for all unique seeds
-        with Pool(len(os.sched_getaffinity(0))) as p:
+        with Pool(len(os.sched_getaffinity(0))-1) as p:
             permutations = p.imap(self.logits_processor.permute.get_unshuffled_indices, key_index_dict.items(), chunksize=1000)
             if use_tqdm:
                 permutations = tqdm(permutations, total=len(key_index_dict), mininterval=5, desc="Getting permutations")
