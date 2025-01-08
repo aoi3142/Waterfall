@@ -37,6 +37,6 @@ class WatermarkingFnSquare(WatermarkingFn):
         q = bins.dot(self.phis.T)
         q *= self.scaling_factor
         k_p_strength = q[:,np.array(k_p)-1]
-        k_p_ranking = (q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)
-        k_p_extracted = np.argmax(q, axis=-1) + 1
+        k_p_ranking = ((q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)).astype(self.dtype)
+        k_p_extracted = (np.argmax(q, axis=-1) + 1).astype(self.dtype)
         return k_p_strength, k_p_ranking, k_p_extracted

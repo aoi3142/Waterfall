@@ -59,7 +59,7 @@ class Permute:
             permutation = np.random.RandomState(key).permutation(self.N).astype(self.dtype)
         return permutation
 
-    def get_unshuffled_indices(self, args):
+    def get_unshuffled_indices(self, ids, args):
         key, indices = args
-        permutation = self.get_permutation(key[1:], key[0])
-        return {k: permutation[k] for k in indices}
+        permutation = np.stack([self.get_permutation(key, id) for id in ids])
+        return {k: v for k, v in zip(indices, permutation[:,indices].T)}
