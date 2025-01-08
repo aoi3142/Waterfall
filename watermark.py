@@ -68,7 +68,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
     parser.add_argument('--id',default=42,type=int,
             help='id: unique ID')
-    parser.add_argument('--kappa',default=4,type=float,
+    parser.add_argument('--kappa',default=2,type=float,
             help='kappa: watermarking strength')
     parser.add_argument('--k_p', default=1, type=int,
             help="k_p: Perturbation key")
