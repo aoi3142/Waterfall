@@ -165,33 +165,39 @@ class Watermarker:
                 all_keys[i].append((prev_token, t))
         key_index_dict = {k:tuple(v) for k,v in key_index_dict.items()}
 
-        with Pool(len(os.sched_getaffinity(0))-1) as p:
-            if len(all_tokens) > batch_size * 4:
-                pool_map = partial(p.imap, chunksize=batch_size)
+        use_mp = len(all_tokens) > batch_size * 4
+        if use_mp:
+            p = Pool(len(os.sched_getaffinity(0))-1)
+            pool_map = partial(p.imap, chunksize=batch_size)
+        else:
+            pool_map = map
+
+        # Generate permutations for all unique seeds
+        permutations = pool_map(
+            partial(self.logits_processor.permute.get_unshuffled_indices, ids), 
+            key_index_dict.items())
+        permutations = tqdm(permutations, total=len(key_index_dict), desc="Getting permutations", disable=not use_tqdm)
+        for k, value in zip(key_index_dict.keys(), permutations):
+            key_index_dict[k] = value
+
+        # Assign indices to unshuffled_indices
+        unshuffled_indices: List[np.ndarray] = []  # [text x id x length]
+        for keys in tqdm(all_keys, desc="Assigning indices", disable=not use_tqdm):
+            if len(keys) == 0:
+                unshuffled_indices.append(np.zeros((len(ids), 0), dtype=np.min_scalar_type(self.N)))
             else:
-                pool_map = map
-            # Generate permutations for all unique seeds
-            permutations = pool_map(
-                partial(self.logits_processor.permute.get_unshuffled_indices, ids), 
-                key_index_dict.items())
-            permutations = tqdm(permutations, total=len(key_index_dict), desc="Getting permutations", disable=not use_tqdm)
-            for k, value in zip(key_index_dict.keys(), permutations):
-                key_index_dict[k] = value
+                unshuffled_indices.append(np.stack([key_index_dict[key][t] for key, t in keys]).T)  # [id x length]
 
-            # Assign indices to unshuffled_indices
-            unshuffled_indices: List[np.ndarray] = []  # [text x id x length]
-            for keys in tqdm(all_keys, desc="Assigning indices", disable=not use_tqdm):
-                if len(keys) == 0:
-                    unshuffled_indices.append(np.zeros((len(ids), 0), dtype=np.min_scalar_type(self.N)))
-                else:
-                    unshuffled_indices.append(np.stack([key_index_dict[key][t] for key, t in keys]).T)  # [id x length]
+        # Convert indices to counts
+        cumulative_token_count = pool_map(
+            partial(indices_to_counts, self.N, np.min_scalar_type(max_length)), 
+            unshuffled_indices
+            )
+        cumulative_token_count = list(tqdm(cumulative_token_count, total=len(unshuffled_indices), desc="Counting tokens", disable=not use_tqdm))
 
-            # Convert indices to counts
-            cumulative_token_count = pool_map(
-                partial(indices_to_counts, self.N, np.min_scalar_type(max_length)), 
-                unshuffled_indices
-                )
-            cumulative_token_count = list(tqdm(cumulative_token_count, total=len(unshuffled_indices), desc="Counting tokens", disable=not use_tqdm))
+        if use_mp:
+            p.close()
+            p.join()
 
         if return_dense:
             cumulative_token_count = list(map(lambda x: x.toarray(), cumulative_token_count))
