@@ -13,6 +13,8 @@ Gregory Kang Ruey Lau*, Xinyuan Niu*, Hieu Dao, Jiangwei Chen, Chuan-Sheng Foo, 
 
 3. Clients can quickly verify whether a suspected text $T_sus$ contains the watermark and originated from $T_o$
 
+Note: This code has been slightly modified from the implementation of the experiments in the paper. Refer to Appendix L.6 for details.
+
 # Abstract
 Protecting intellectual property (IP) of text such as articles and code is increasingly important, especially as sophisticated attacks become possible, such as paraphrasing by large language models (LLMs) or even unauthorized training of LLMs on copyrighted text to infringe such IP. However, existing text watermarking methods are not robust enough against such attacks nor scalable to millions of users for practical implementation. In this paper, we propose Waterfall, the first training-free framework for robust and scalable text watermarking applicable across multiple text types (e.g., articles, code) and languages supportable by LLMs, for general text and LLM data provenance. Waterfall comprises several key innovations, such as being the first to use LLM as paraphrasers for watermarking along with a novel combination of techniques that are surprisingly effective in achieving robust verifiability and scalability. We empirically demonstrate that Waterfall achieves significantly better scalability, robust verifiability, and computational efficiency compared to SOTA article-text watermarking methods, and also showed how it could be directly applied to the watermarking of code.
 
@@ -69,13 +71,13 @@ python watermark.py \
   --T_o          "TEXT TO WATERMARK"              `# Original text to watermark`  \
   --id           42                               `# Unique watermarking ID`      \
   --k_p          1                                `# Additional perturbation key` \
-  --kappa        4                                `# Watermark strength`          \
+  --kappa        2                                `# Watermark strength`          \
   --model        meta-llama/Llama-3.1-8B-Instruct `# Paraphrasing LLM`            \
   --watermark_fn fourier                          `# fourier/square watermark`    \
   --device       cuda                             `# Use cuda/cpu`
 ```
 
-## BibTeX
+# BibTeX
 ```
 @inproceedings{lau2024waterfall,
   title={Waterfall: Scalable Framework for Robust Text Watermarking and Provenance for {LLM}s},
