@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from .Permute import Permute
 from .WatermarkingFn import WatermarkingFn
+from .WatermarkingFnFourier import WatermarkingFnFourier
 from scipy.sparse import vstack
 from tqdm import tqdm
 import gc
@@ -14,6 +15,7 @@ from multiprocessing import Pool
 import os
 from collections import defaultdict
 from functools import partial
+from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self, 
@@ -64,7 +66,7 @@ def indices_to_counts(N : int, dtype, indices) -> csr_matrix:
     return counts
 
 class Watermarker:
-    def __init__(self, model, tokenizer, id = 0, kappa = 6, k_p = 1, n_gram = 2, watermarkingFnClass = None):
+    def __init__(self, model, tokenizer, id = 0, kappa = 6, k_p = 1, n_gram = 2, watermarkingFnClass = WatermarkingFnFourier):
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
 
         self.model = model
@@ -77,7 +79,10 @@ class Watermarker:
         self.N = self.tokenizer.vocab_size
         self.logits_processor = PerturbationProcessor(N = self.N, id = id)
 
-        self.watermarking_fn: WatermarkingFn = watermarkingFnClass(id = id, k_p = k_p, N = self.N, kappa = kappa)
+        self.compute_phi(watermarkingFnClass)
+
+    def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier):
+        self.watermarking_fn: WatermarkingFn = watermarkingFnClass(id = id, k_p = self.k_p, N = self.N, kappa = self.kappa)
         self.phi = self.watermarking_fn.phi
 
         self.logits_processor.set_phi(self.phi)
@@ -85,6 +90,7 @@ class Watermarker:
     def generate(
             self, 
             prompt = None, 
+            tokd_input = None,
             n_gram = None, 
             max_new_tokens = 1000, 
             return_text=True, 
@@ -95,14 +101,24 @@ class Watermarker:
             ) -> List[str] | dict:
         if n_gram is None:
             n_gram = self.n_gram
-        tokd_input = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(self.model.device)
+        if tokd_input is None:
+            tokd_input = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+        tokd_input = tokd_input.to(self.model.device)
+        logits_processor = []
+        if "top_k" in kwargs and kwargs["top_k"] is not None and kwargs["top_k"] != 0:
+            logits_processor.append(TopKLogitsWarper(kwargs.pop("top_k")))
+        if "top_p" in kwargs and kwargs["top_p"] is not None and kwargs["top_p"] < 1.0:
+            logits_processor.append(TopPLogitsWarper(kwargs.pop("top_p")))
+        if self.kappa != 0:
+            logits_processor.append(self.logits_processor)
+
         with torch.no_grad():
             self.logits_processor.reset(n_gram)
             output = self.model.generate(
                 **tokd_input, 
                 max_new_tokens=max_new_tokens, 
                 do_sample=do_sample,
-                logits_processor=([self.logits_processor] if self.kappa > 0 else None),
+                logits_processor=logits_processor,
                 pad_token_id=self.tokenizer.eos_token_id,
                 **kwargs
                 )

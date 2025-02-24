@@ -40,7 +40,7 @@ def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2):
     # Select best paraphrasing based on q_score and semantic similarity
     sts_scores = sts_model.encode([T_o, *watermarked["text"]], convert_to_tensor=True)
     cos_sim = torch.nn.functional.cosine_similarity(sts_scores[0], sts_scores[1:], dim=1).cpu()
-    selection_score = cos_sim + watermarked["q_score"]
+    selection_score = cos_sim * 2 + watermarked["q_score"]
     selection = torch.argmax(selection_score)
 
     T_w = watermarked["text"][selection]
