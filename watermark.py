@@ -17,7 +17,7 @@ prompt = (
 )
 pre_paraphrased = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
-def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2):
+def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2, STS_scale=2.0):
     print(f"\nOriginal text T_o:\n\n{T_o}\n")
 
     # Generate watermarked text
@@ -40,7 +40,7 @@ def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2):
     # Select best paraphrasing based on q_score and semantic similarity
     sts_scores = sts_model.encode([T_o, *watermarked["text"]], convert_to_tensor=True)
     cos_sim = torch.nn.functional.cosine_similarity(sts_scores[0], sts_scores[1:], dim=1).cpu()
-    selection_score = cos_sim * 2 + watermarked["q_score"]
+    selection_score = cos_sim * STS_scale + watermarked["q_score"]
     selection = torch.argmax(selection_score)
 
     T_w = watermarked["text"][selection]
@@ -80,6 +80,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda', type=str)
     parser.add_argument('--num_beam_groups', default=4, type=int)
     parser.add_argument('--beams_per_group', default=2, type=int)
+    parser.add_argument('--STS_scale', default=2, type=float, help="Scale factor for trade-off between STS and q score. Higher means more emphasis on STS.")
 
     args = parser.parse_args()
 
@@ -108,4 +109,4 @@ if __name__ == "__main__":
 
     sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=args.device)
 
-    watermark_and_evaluate(T_o, id, k_p, args.num_beam_groups, args.beams_per_group)
+    watermark_and_evaluate(T_o, id, k_p, args.num_beam_groups, args.beams_per_group, args.STS_scale)
