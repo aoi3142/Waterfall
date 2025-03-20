@@ -1,4 +1,4 @@
-# Waterfall: Framework for Robust and Scalable Text Watermarking [EMNLP 2024 Main Long]
+# Waterfall: Scalable Framework for Robust Text Watermarking and Provenance for LLMs [EMNLP 2024 Main Long]
 Gregory Kang Ruey Lau*, Xinyuan Niu*, Hieu Dao, Jiangwei Chen, Chuan-Sheng Foo, Bryan Kian Hsiang Low
 
 [EMNLP](https://aclanthology.org/2024.emnlp-main.1138/) | [ArXiv](https://arxiv.org/abs/2407.04411) | [PDF](https://arxiv.org/pdf/2407.04411)
