@@ -11,7 +11,7 @@ Gregory Kang Ruey Lau*, Xinyuan Niu*, Hieu Dao, Jiangwei Chen, Chuan-Sheng Foo, 
 
 2. Adversaries try to claim IP by plagiarizing text (e.g. paraphrasing), or by using text to train their own LLMs without authorization
 
-3. Clients can quickly verify whether a suspected text $T_sus$ contains the watermark and originated from $T_o$
+3. Clients can quickly verify whether a suspected text $T_{sus}$ contains the watermark and originated from $T_o$
 
 Note: This code has been slightly modified from the implementation of the experiments in the paper. Refer to Appendix L.6 for details.
 
@@ -90,5 +90,4 @@ python watermark.py \
   doi={10.18653/v1/2024.emnlp-main.1138},
   pages={20432--20466},
 }
-
 ```
