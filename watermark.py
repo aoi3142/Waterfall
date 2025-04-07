@@ -25,7 +25,7 @@ def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2, S
         [
             {"role":"system", "content":prompt},
             {"role":"user", "content":T_o},
-        ], tokenize=False, add_generation_prompt = True) + f"{pre_paraphrased}\n\n"
+        ], tokenize=False, add_generation_prompt = True) + pre_paraphrased
     watermarked = watermarker.generate(
         paraphrasing_prompt, 
         return_scores = True,
