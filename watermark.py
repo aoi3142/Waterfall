@@ -80,6 +80,10 @@ def watermark_texts(
     kappa: float = 2.0,
     model_path: str = "meta-llama/Llama-3.1-8B-Instruct",
     watermark_fn: Literal["fourier", "square"] = "fourier",
+    tokenizer: Optional[AutoTokenizer] = None,
+    model: Optional[AutoModelForCausalLM] = None,
+    watermarker: Optional[Watermarker] = None,
+    sts_model: Optional[SentenceTransformer] = None,
     device: str = "cuda",
     num_beam_groups: int = 4,
     beams_per_group: int = 2,
@@ -93,16 +97,21 @@ def watermark_texts(
     else:
         raise ValueError("Invalid watermarking function")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path, 
-        torch_dtype=torch.bfloat16,
-        device_map=device,
-        )
+    if tokenizer is None:
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    watermarker = Watermarker(model, tokenizer, id, kappa, k_p, watermarkingFnClass=watermarkingFnClass)
+    if watermarker is None:
+        if model is None:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path, 
+                torch_dtype=torch.bfloat16,
+                device_map=device,
+                )
 
-    sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=device)
+        watermarker = Watermarker(model, tokenizer, id, kappa, k_p, watermarkingFnClass=watermarkingFnClass)
+
+    if sts_model is None:
+        sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=device)
 
     watermarked_texts_list = []
 
@@ -187,17 +196,20 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
 
-    # print(T_o)
-    # print()
+    texts = [
+        "How sure are you, and how do you know? I've been involved in a number of conversations this past week trying to figure out whether that's true, and no one's had conclusive evidence. See this LW thread and this twitter thread (including the parts above the linked post).",
+        "Contact is a word-guessing game for three or more players. In contact, one person ('wordmaster') thinks of a word ('target word') and the objective of the other players (“guessers”) is to guess that target word by asking questions to the wordmaster. The target word and guesses are generally restricted to improper nouns. Wordmaster starts by announcing the first letter of the target word. Each guesser then thinks of words beginning with that letter. One guesser asks a question for a not-yet-guessed such word (“guess word”).",
+        "Caleb's results are really interesting! What do you think about adding his idea ('In the real world, comics and images of notes tend to be associated with strong opinions and emotions') as a new subcategory/bulletpoint in the 'What might be going on here?'->'Statistical pattern differences between image and text' section? I'd be happy to add it if that seems like a good idea to you.",
+        ]
 
-    # T_w = watermark(T_o, tokenizer, watermarker, sts_model)
-    # print(watermark(T_o, tokenizer, watermarker, sts_model))
-    # print()
+    watermarked_texts = watermark_texts(texts, id=43, use_tqdm=True)
 
-    # print(evaluate_watermark(T_o, id, k_p, watermarker))
-    # print()
+    for i in range(len(texts)):
+        print(texts[i])
+        print(evaluate_single_watermark(texts[i],43))
+        print()
+    print(watermarked_texts)
 
-    # print(STS_scorer(T_o,T_w, sts_model))
+
 
