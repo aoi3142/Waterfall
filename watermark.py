@@ -1,112 +1,264 @@
 import argparse
+import os
 import torch
+from typing import List, Literal, Optional, Tuple
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import numpy as np
+from tqdm.auto import tqdm
+
 from Watermark.WatermarkingFnFourier import WatermarkingFnFourier
 from Watermark.WatermarkingFnSquare import WatermarkingFnSquare
 from Watermark.WatermarkerBase import Watermarker
 from sentence_transformers import SentenceTransformer
-import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-prompt = (
+PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
     "Do not include any other sentences in the response, such as explanations of the paraphrasing. "
     "Do not summarize."
 )
-pre_paraphrased = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
+PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
-def watermark_and_evaluate(T_o, id, k_p, num_beam_groups=4, beams_per_group=2, STS_scale=2.0):
-    print(f"\nOriginal text T_o:\n\n{T_o}\n")
-
-    # Generate watermarked text
+def watermark(
+    T_o: str,
+    tokenizer: AutoTokenizer,
+    watermarker: Watermarker,
+    sts_model: SentenceTransformer,
+    num_beam_groups: int = 4,
+    beams_per_group: int = 2,
+    STS_scale:float = 2.0,
+    diversity_penalty: float = 0.5,
+    max_new_tokens: Optional[int] = None,
+) -> str:
     paraphrasing_prompt = tokenizer.apply_chat_template(
         [
-            {"role":"system", "content":prompt},
+            {"role":"system", "content":PROMPT},
             {"role":"user", "content":T_o},
-        ], tokenize=False, add_generation_prompt = True) + pre_paraphrased
+        ], tokenize=False, add_generation_prompt = True) + PRE_PARAPHRASED
+
     watermarked = watermarker.generate(
-        paraphrasing_prompt, 
+        paraphrasing_prompt,
         return_scores = True,
-        max_new_tokens = int(len(paraphrasing_prompt) * 1.5),
+        max_new_tokens = int(len(paraphrasing_prompt) * 1.5) if max_new_tokens is None else max_new_tokens,
         do_sample = False, temperature=None, top_p=None,
-        num_beams = num_beam_groups * beams_per_group, 
-        num_beam_groups = num_beam_groups, 
-        num_return_sequences = num_beam_groups * beams_per_group, 
-        diversity_penalty = 0.5,
+        num_beams = num_beam_groups * beams_per_group,
+        num_beam_groups = num_beam_groups,
+        num_return_sequences = num_beam_groups * beams_per_group,
+        diversity_penalty = diversity_penalty,
         )
-    
+
     # Select best paraphrasing based on q_score and semantic similarity
-    sts_scores = sts_model.encode([T_o, *watermarked["text"]], convert_to_tensor=True)
-    cos_sim = torch.nn.functional.cosine_similarity(sts_scores[0], sts_scores[1:], dim=1).cpu()
-    selection_score = cos_sim * STS_scale + watermarked["q_score"]
+    sts_scores = STS_scorer(T_o, watermarked["text"], sts_model)
+    selection_score = sts_scores * STS_scale + torch.from_numpy(watermarked["q_score"])
     selection = torch.argmax(selection_score)
 
     T_w = watermarked["text"][selection]
 
-    print(f"\nWatermarked text T_w:\n\n{T_w}\n")
+    return T_w
 
-    # Verify on original and watermarked text
-    verify_results = watermarker.verify([T_o, T_w], id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
+def verify_watermark(texts: List[str], id: int, watermarker: Watermarker, k_p: Optional[int] = None) -> Tuple[float,float]:
+    """Returns the q_score and extracted k_p"""
+    verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
     q_score = verify_results["q_score"]
     k_p_extracted = verify_results["k_p_extracted"]
 
+    return q_score[:,0,0], k_p_extracted[:, 0]
+
+def STS_scorer_batch(
+    original_texts: List[str],
+    test_texts: List[List[str]],
+    sts_model: SentenceTransformer
+) -> torch.Tensor:
+
+    assert len(original_texts) == len(test_texts), "original_texts and test_texts must have the same length"
+    assert all(len(test_texts[0]) == len(sublist) for sublist in test_texts[1:]), "All sublists in test_texts must have the same length"
+
+    all_text = original_texts + [text for sublist in test_texts for text in sublist]
+    embeddings = sts_model.encode(all_text, convert_to_tensor=True, normalize_embeddings=True)
+    original_embeddings = embeddings[:len(original_texts)]
+    test_embeddings = embeddings[len(original_texts):].reshape(len(test_texts), -1, embeddings.shape[1])
+    cos_sim = torch.einsum('ik,ijk->ij', original_embeddings, test_embeddings).cpu()
+    return cos_sim
+
+def STS_scorer(
+    original_text: str,
+    test_texts: str | List[str],
+    sts_model: SentenceTransformer
+) -> float | torch.Tensor:
+    cos_sim = STS_scorer_batch(
+        original_texts=[original_text],
+        test_texts=[[test_texts] if isinstance(test_texts, str) else test_texts],
+        sts_model=sts_model
+    )[0]
+    if isinstance(test_texts, str):
+        cos_sim = cos_sim.item()
+    return cos_sim
+
+def watermark_texts(
+    T_os: List[str],
+    id: int,
+    k_p: int = 1,
+    kappa: float = 2.0,
+    model_path: str = "meta-llama/Llama-3.1-8B-Instruct",
+    torch_dtype: torch.dtype = torch.bfloat16,
+    sts_model_path: str = "sentence-transformers/all-mpnet-base-v2",
+    watermark_fn: Literal["fourier", "square"] = "fourier",
+    tokenizer: Optional[AutoTokenizer] = None,
+    model: Optional[AutoModelForCausalLM] = None,
+    watermarker: Optional[Watermarker] = None,
+    sts_model: Optional[SentenceTransformer] = None,
+    device: str = "cuda",
+    num_beam_groups: int = 4,
+    beams_per_group: int = 2,
+    diversity_penalty: float = 0.5,
+    STS_scale:float = 2.0,
+    use_tqdm: bool = False,
+) -> List[str]:
+    if watermark_fn == 'fourier':
+        watermarkingFnClass = WatermarkingFnFourier
+    elif watermark_fn == 'square':
+        watermarkingFnClass = WatermarkingFnSquare
+    else:
+        raise ValueError("Invalid watermarking function")
+
+    if tokenizer is None:
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    if watermarker is None:
+        if model is None:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch_dtype,
+                device_map=device,
+                )
+
+        watermarker = Watermarker(model=model, tokenizer=tokenizer, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+
+    if sts_model is None:
+        sts_model = SentenceTransformer(sts_model_path, device=device)
+
+    T_ws = []
+
+    for T_o in tqdm(T_os, desc="Watermarking texts",  disable=not use_tqdm):
+        T_w = watermark(
+            T_o,
+            tokenizer = tokenizer,
+            watermarker = watermarker,
+            sts_model = sts_model,
+            num_beam_groups = num_beam_groups,
+            beams_per_group = beams_per_group,
+            diversity_penalty = diversity_penalty,
+            STS_scale = STS_scale,
+            )
+        T_ws.append(T_w)
+
+    return T_ws
+
+def pretty_print(
+        T_o: str, T_w: str,
+        sts_score: float,
+        T_o_q_score: float, T_w_q_score: float,
+        k_p: int, T_w_k_p: int,
+        ) -> None:
+    print(f"\nOriginal text T_o:\n\n{T_o}\n")
+    print(f"\nWatermarked text T_w:\n\n{T_w}\n")
+
     # Original text
-    print(f"Verification score of T_o: \033[93m{q_score[0,0,0]:.4f}\033[0m")
+    print(f"Verification score of T_o: \033[93m{T_o_q_score:.4f}\033[0m")
 
     # Watermarked text
-    print(f"Verification score of T_w: \033[92m{q_score[1,0,0]:.4f}\033[0m\n")
+    print(f"Verification score of T_w: \033[92m{T_w_q_score:.4f}\033[0m\n")
 
-    print(f"STS score of T_w         : \033[94m{cos_sim[selection].item():.4f}\033[0m\n")
+    print(f"STS score of T_w         : \033[94m{sts_score:.4f}\033[0m\n")
 
     # Extract from watermarked text
     print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
-    print(f"Extracted k_p from T_w   : \033[96m{k_p_extracted[1,0]}\033[0m\n")
+    print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
     parser.add_argument('--id',default=42,type=int,
-            help='id: unique ID')
-    parser.add_argument('--kappa',default=2,type=float,
-            help='kappa: watermarking strength')
+        help='id: unique ID')
+    parser.add_argument('--kappa',default=2.,type=float,
+        help='kappa: watermarking strength')
     parser.add_argument('--k_p', default=1, type=int,
-            help="k_p: Perturbation key")
+        help="k_p: Perturbation key")
     parser.add_argument('--model', default='meta-llama/Llama-3.1-8B-Instruct', type=str,
-            help="model")
-    parser.add_argument('--T_o', default='Protecting intellectual property (IP) of text such as articles and code is increasingly important, especially as sophisticated attacks become possible, such as paraphrasing by large language models (LLMs) or even unauthorized training of LLMs on copyrighted text to infringe such IP. However, existing text watermarking methods are not robust enough against such attacks nor scalable to millions of users for practical implementation.',
-            type=str, help="original_text")
-    parser.add_argument('--watermark_fn', default='fourier', type=str)
-    parser.add_argument('--device', default='cuda', type=str)
-    parser.add_argument('--num_beam_groups', default=4, type=int)
-    parser.add_argument('--beams_per_group', default=2, type=int)
-    parser.add_argument('--STS_scale', default=2, type=float, help="Scale factor for trade-off between STS and q score. Higher means more emphasis on STS.")
+        help="watermarking model")
+    parser.add_argument('--sts_model', default='sentence-transformers/all-mpnet-base-v2', type=str,
+        help="STS model")
+    parser.add_argument('--T_o', default=None, type=str,
+        help="original_text")
+    parser.add_argument('--watermark_fn', default='fourier', type=str,
+        help="watermarking function, can be 'fourier' or 'square'")
+    parser.add_argument('--device', default='cuda', type=str,
+        help="device to use for generation")
+    parser.add_argument('--num_beam_groups', default=4, type=int,
+        help="number of beam groups for generation")
+    parser.add_argument('--beams_per_group', default=2, type=int,
+        help="number of beams per group for generation")
+    parser.add_argument('--diversity_penalty', default=0.5, type=float,
+        help="diversity penalty for group beam search")
+    parser.add_argument('--STS_scale', default=2.0, type=float,
+        help="scale factor for trade-off between STS and q score. Higher means more emphasis on STS.")
 
     args = parser.parse_args()
 
-    id = args.id
-    kappa = args.kappa
-    k_p = args.k_p
-    model_name_or_path = args.model
-    T_o = args.T_o
-    
     if args.watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
     elif args.watermark_fn == 'square':
         watermarkingFnClass = WatermarkingFnSquare
     else:
+        # Add any other self-defined watermarking functions here
         raise ValueError("Invalid watermarking function")
+
+    id = args.id
+    kappa = args.kappa
+    k_p = args.k_p
+    model_name_or_path = args.model
+    sts_model_name = args.sts_model
+    T_o = args.T_o
+    device = args.device
+    num_beam_groups = args.num_beam_groups
+    beams_per_group = args.beams_per_group
+    diversity_penalty = args.diversity_penalty
+    STS_scale = args.STS_scale
+
+    if args.T_o is None:
+        T_o = "Protecting intellectual property (IP) of text such as articles and code is increasingly important, especially as sophisticated attacks become possible, such as paraphrasing by large language models (LLMs) or even unauthorized training of LLMs on copyrighted text to infringe such IP. However, existing text watermarking methods are not robust enough against such attacks nor scalable to millions of users for practical implementation."
+    T_os = [T_o]    # Replace with your own list of texts to watermark
 
     # Initialize tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path, 
+        model_name_or_path,
         torch_dtype=torch.bfloat16,
-        device_map=args.device,
+        device_map=device,
         )
 
-    watermarker = Watermarker(model, tokenizer, id, kappa, k_p, watermarkingFnClass=watermarkingFnClass)
+    watermarker = Watermarker(model=model, tokenizer=tokenizer, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
 
-    sts_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=args.device)
+    sts_model = SentenceTransformer(sts_model_name, device=device)
 
-    watermark_and_evaluate(T_o, id, k_p, args.num_beam_groups, args.beams_per_group, args.STS_scale)
+    T_ws = watermark_texts(
+        T_os,
+        id=id, k_p=k_p, kappa=kappa,
+        watermarker=watermarker, sts_model=sts_model,
+        beams_per_group=beams_per_group, num_beam_groups=num_beam_groups, STS_scale=STS_scale,
+        use_tqdm=True
+        )
+
+    # watermarker = Watermarker(model=None, tokenizer=tokenizer, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
+    q_scores, extracted_k_ps = verify_watermark(T_os + T_ws, id, watermarker, k_p=k_p)
+
+    for i in range(len(T_os)):
+        print("=" * os.get_terminal_size().columns)
+
+        sts_score = STS_scorer(T_os[i], T_ws[i], sts_model)
+        pretty_print(
+            T_os[i], T_ws[i],
+            sts_score,
+            q_scores[i], q_scores[i + len(T_os)],
+            k_p, extracted_k_ps[i + len(T_os)],
+        )

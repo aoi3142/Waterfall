@@ -1,7 +1,6 @@
-torch
-transformers
-numpy
-sentence-transformers
-accelerate
-scipy
-tqdm
+accelerate>=0.29.0
+numpy>=2.0.0
+scipy>=1.13.0
+sentence-transformers>=3.0.0
+torch>=2.3.0
+transformers>=4.43.1
