@@ -67,8 +67,8 @@ def indices_to_counts(N : int, dtype : np.dtype, indices : np.ndarray) -> csr_ma
 
 class Watermarker:
     def __init__(self,
-                 model,
                  tokenizer,
+                 model : Optional[AutoModelForCausalLM] = None,
                  id : int = 0,
                  kappa : float = 6,
                  k_p : int = 1,
@@ -76,6 +76,8 @@ class Watermarker:
                  watermarkingFnClass = WatermarkingFnFourier
                  ) -> None:
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
+
+        assert (model is None) or isinstance(model, modeling_utils.PreTrainedModel), f"model must be a transformers model, value provided is {type(model)}" # argument order for tokenizer and model were swapped since the original code
 
         self.tokenizer = tokenizer
         self.model = model

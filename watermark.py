@@ -133,7 +133,7 @@ def watermark_texts(
                 device_map=device,
                 )
 
-        watermarker = Watermarker(model=model, tokenizer=tokenizer, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+        watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
 
     if sts_model is None:
         sts_model = SentenceTransformer(sts_model_path, device=device)
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         device_map=device,
         )
 
-    watermarker = Watermarker(model=model, tokenizer=tokenizer, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+    watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
 
     sts_model = SentenceTransformer(sts_model_name, device=device)
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
         use_tqdm=True
         )
 
-    # watermarker = Watermarker(model=None, tokenizer=tokenizer, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
+    # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
     q_scores, extracted_k_ps = verify_watermark(T_os + T_ws, id, watermarker, k_p=k_p)
 
     for i in range(len(T_os)):
