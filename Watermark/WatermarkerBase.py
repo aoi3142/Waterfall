@@ -1,4 +1,4 @@
-from transformers import LogitsProcessor
+from transformers import LogitsProcessor, AutoModelForCausalLM, modeling_utils
 import numpy as np
 import torch
 from .Permute import Permute
@@ -9,7 +9,7 @@ from tqdm import tqdm
 import gc
 import time
 from scipy.sparse import csr_matrix
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import torch
 from multiprocessing import Pool
 import os
@@ -18,10 +18,10 @@ from functools import partial
 from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper
 
 class PerturbationProcessor(LogitsProcessor):
-    def __init__(self, 
-                 N = 32000,     # Vocab size
-                 id = 0,        # Watermark ID
-                 ):
+    def __init__(self,
+                 N : int = 32000,     # Vocab size
+                 id : int = 0,        # Watermark ID
+                 ) -> None:
 
         self.id = id
         self.N = N
@@ -33,7 +33,7 @@ class PerturbationProcessor(LogitsProcessor):
 
         self.permute = Permute(self.N)
 
-    def reset(self, n_gram = 2):
+    def reset(self, n_gram : int = 2) -> None:
         self.n_gram = n_gram
         self.init_token_count = None
         if np.allclose(self.phi,np.median(self.phi)):
@@ -42,7 +42,7 @@ class PerturbationProcessor(LogitsProcessor):
         else:
             self.skip_watermark = False
 
-    def set_phi(self, phi):
+    def set_phi(self, phi : np.ndarray) -> None:
         self.phi = phi
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
@@ -61,16 +61,24 @@ class PerturbationProcessor(LogitsProcessor):
         scores[:,:self.N] += torch.tensor(self.phi[permutations], device=scores.device)
         return scores
 
-def indices_to_counts(N : int, dtype, indices) -> csr_matrix:
+def indices_to_counts(N : int, dtype : np.dtype, indices : np.ndarray) -> csr_matrix:
     counts = csr_matrix([np.bincount(j, minlength=N).astype(dtype) for j in indices])
     return counts
 
 class Watermarker:
-    def __init__(self, model, tokenizer, id = 0, kappa = 6, k_p = 1, n_gram = 2, watermarkingFnClass = WatermarkingFnFourier):
+    def __init__(self,
+                 model,
+                 tokenizer,
+                 id : int = 0,
+                 kappa : float = 6,
+                 k_p : int = 1,
+                 n_gram : int = 2,
+                 watermarkingFnClass = WatermarkingFnFourier
+                 ) -> None:
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
 
-        self.model = model
         self.tokenizer = tokenizer
+        self.model = model
         self.id = id
         self.k_p = k_p
         self.n_gram = n_gram
@@ -81,24 +89,27 @@ class Watermarker:
 
         self.compute_phi(watermarkingFnClass)
 
-    def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier):
+    def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier) -> None:
         self.watermarking_fn: WatermarkingFn = watermarkingFnClass(id = id, k_p = self.k_p, N = self.N, kappa = self.kappa)
         self.phi = self.watermarking_fn.phi
 
         self.logits_processor.set_phi(self.phi)
 
     def generate(
-            self, 
-            prompt = None, 
-            tokd_input = None,
-            n_gram = None, 
-            max_new_tokens = 1000, 
-            return_text=True, 
-            return_tokens=False, 
-            return_scores=False, 
-            do_sample=True, 
+            self,
+            prompt : str = None,
+            tokd_input : Optional[torch.Tensor] = None,
+            n_gram : Optional[int] = None,
+            max_new_tokens : int = 1000,
+            return_text : bool =True,
+            return_tokens : bool =False,
+            return_scores : bool =False,
+            do_sample : bool =True,
             **kwargs
             ) -> List[str] | dict:
+
+        assert self.model is not None, "Model is not loaded. Please load the model before generating text."
+
         if n_gram is None:
             n_gram = self.n_gram
         if tokd_input is None:
@@ -115,8 +126,8 @@ class Watermarker:
         with torch.no_grad():
             self.logits_processor.reset(n_gram)
             output = self.model.generate(
-                **tokd_input, 
-                max_new_tokens=max_new_tokens, 
+                **tokd_input,
+                max_new_tokens=max_new_tokens,
                 do_sample=do_sample,
                 logits_processor=logits_processor,
                 pad_token_id=self.tokenizer.eos_token_id,
@@ -150,12 +161,12 @@ class Watermarker:
         return return_dict
 
     def get_cumulative_token_count(
-            self, 
+            self,
             ids : List[int] | int,
-            all_tokens : List[torch.Tensor] | torch.Tensor | List[np.ndarray] | np.ndarray | List[List[int]] | List[int], 
-            n_gram : int = 2, 
-            return_unshuffled_indices : bool = False, 
-            use_tqdm : bool = False, 
+            all_tokens : List[torch.Tensor] | torch.Tensor | List[np.ndarray] | np.ndarray | List[List[int]] | List[int],
+            n_gram : int = 2,
+            return_unshuffled_indices : bool = False,
+            use_tqdm : bool = False,
             return_dense : bool = True,
             batch_size : int = 2**8,
             ) -> List[csr_matrix] | List[np.ndarray] | Tuple[List[csr_matrix], List[List[np.ndarray]]] | Tuple[List[np.ndarray], List[List[np.ndarray]]]:
@@ -190,7 +201,7 @@ class Watermarker:
 
         # Generate permutations for all unique seeds
         permutations = pool_map(
-            partial(self.logits_processor.permute.get_unshuffled_indices, ids), 
+            partial(self.logits_processor.permute.get_unshuffled_indices, ids),
             key_index_dict.items())
         permutations = tqdm(permutations, total=len(key_index_dict), desc="Getting permutations", disable=not use_tqdm)
         for k, value in zip(key_index_dict.keys(), permutations):
@@ -206,7 +217,7 @@ class Watermarker:
 
         # Convert indices to counts
         cumulative_token_count = pool_map(
-            partial(indices_to_counts, self.N, np.min_scalar_type(max_length)), 
+            partial(indices_to_counts, self.N, np.min_scalar_type(max_length)),
             unshuffled_indices
             )
         cumulative_token_count = list(tqdm(cumulative_token_count, total=len(unshuffled_indices), desc="Counting tokens", disable=not use_tqdm))
@@ -223,14 +234,14 @@ class Watermarker:
         return cumulative_token_count
 
     def verify(
-            self, 
-            text : str | List[str], 
-            id: int | List[int] | None = None, 
-            k_p : int | List[int] | None = None, 
+            self,
+            text : str | List[str],
+            id: Optional[int | List[int]] = None,
+            k_p : Optional[int | List[int]] = None,
             return_ranking : bool = False,
-            return_extracted_k_p : bool = False, 
-            return_counts : bool = False, 
-            return_unshuffled_indices : bool = False, 
+            return_extracted_k_p : bool = False,
+            return_counts : bool = False,
+            return_unshuffled_indices : bool = False,
             use_tqdm : bool = False,
             batch_size : int = 2**8,
             ) -> np.ndarray | dict:

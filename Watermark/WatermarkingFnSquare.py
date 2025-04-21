@@ -2,7 +2,7 @@ from .WatermarkingFn import *
 import numpy as np
 
 class WatermarkingFnSquare(WatermarkingFn):
-    def __init__(self, id = 0, k_p = 1, N = 32000, kappa = 1):
+    def __init__(self, id : int = 0, k_p : int = 1, N : int = 32000, kappa : float = 1.) -> None:
         super().__init__(id = id, k_p = k_p, N = N, kappa = kappa)
 
         self.k_N = 0

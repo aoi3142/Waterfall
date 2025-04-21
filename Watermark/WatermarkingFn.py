@@ -7,7 +7,7 @@ from typing import List, Tuple
 from scipy.sparse import spmatrix
 
 class WatermarkingFn:
-    def __init__(self, id = 0, k_p = 1, N = 32000, kappa = 1):
+    def __init__(self, id : int = 0, k_p : int = 1, N : int = 32000, kappa : float = 1.) -> None:
         self.id = id
         self.k_p = k_p
         self.N = N
@@ -18,11 +18,11 @@ class WatermarkingFn:
     def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         raise NotImplementedError
 
-    def q(self, 
-          bins : np.ndarray | spmatrix, 
+    def q(self,
+          bins : np.ndarray | spmatrix,
           k_p : List[int],   # If set, only return the k_p-th element of the dot product and its ranking
-          batch : int = 2**8, 
-          use_tqdm : bool = False, 
+          batch : int = 2**8,
+          use_tqdm : bool = False,
           ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if bins.ndim == 1:
             bins = bins[None,:]
