@@ -45,7 +45,9 @@ class PerturbationProcessor(LogitsProcessor):
     def set_phi(self, phi : np.ndarray) -> None:
         self.phi = phi
 
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+    def __call__(self, input_ids: torch.LongTensor,
+                 scores: torch.FloatTensor) -> torch.FloatTensor:
+
         if self.skip_watermark:
             return scores
 
@@ -58,7 +60,12 @@ class PerturbationProcessor(LogitsProcessor):
 
         prev_tokens = input_ids[:,-self.n_gram+1:].cpu().numpy()
         permutations = [self.permute.get_permutation(prev_tokens[i,:], self.id, cache=True) for i in range(prev_tokens.shape[0])]
-        scores[:,:self.N] += torch.tensor(self.phi[permutations], device=scores.device)
+
+        # Compatability for MPS (Apple Metal), which doesn't support float64
+        dtype = torch.float32 if input_ids.device.type == 'mps' else torch.float64
+        scores[:,:self.N] += torch.tensor(self.phi[permutations],
+                                          device=scores.device,
+                                          dtype=dtype)
         return scores
 
 def indices_to_counts(N : int, dtype : np.dtype, indices : np.ndarray) -> csr_matrix:

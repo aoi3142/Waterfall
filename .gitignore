@@ -1,2 +1,5 @@
 *.pyc
 .venv/
+*.egg-info
+/.python-version
+/.idea

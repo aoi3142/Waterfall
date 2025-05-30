@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import os
 import torch
@@ -6,9 +7,9 @@ from typing import List, Literal, Optional, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from Watermark.WatermarkingFnFourier import WatermarkingFnFourier
-from Watermark.WatermarkingFnSquare import WatermarkingFnSquare
-from Watermark.WatermarkerBase import Watermarker
+from waterfall.Watermark.WatermarkingFnFourier import WatermarkingFnFourier
+from waterfall.Watermark.WatermarkingFnSquare import WatermarkingFnSquare
+from waterfall.Watermark.WatermarkerBase import Watermarker
 from sentence_transformers import SentenceTransformer
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -176,6 +177,14 @@ def pretty_print(
     print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
     print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
 
+def detect_gpu():
+    if hasattr(torch, 'mps') and torch.mps.is_available():
+        return 'mps'
+    elif hasattr(torch, 'cuda') and torch.cuda.is_available():
+        return 'cuda'
+    else:
+        return 'cpu'
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
     parser.add_argument('--id',default=42,type=int,
@@ -192,7 +201,7 @@ if __name__ == "__main__":
         help="original_text")
     parser.add_argument('--watermark_fn', default='fourier', type=str,
         help="watermarking function, can be 'fourier' or 'square'")
-    parser.add_argument('--device', default='cuda', type=str,
+    parser.add_argument('--device', default=detect_gpu(), type=str,
         help="device to use for generation")
     parser.add_argument('--num_beam_groups', default=4, type=int,
         help="number of beam groups for generation")
@@ -253,7 +262,14 @@ if __name__ == "__main__":
     q_scores, extracted_k_ps = verify_watermark(T_os + T_ws, id, watermarker, k_p=k_p)
 
     for i in range(len(T_os)):
-        print("=" * os.get_terminal_size().columns)
+        # Handle the case where this is being run
+        # in an IDE or something else without terminal size
+        try:
+            column_size = os.get_terminal_size().columns
+        except OSError as ose:
+            column_size = 80
+
+        print("=" * column_size)
 
         sts_score = STS_scorer(T_os[i], T_ws[i], sts_model)
         pretty_print(
