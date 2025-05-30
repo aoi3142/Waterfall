@@ -7,9 +7,9 @@ from typing import List, Literal, Optional, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from waterfall.Watermark.WatermarkingFnFourier import WatermarkingFnFourier
-from waterfall.Watermark.WatermarkingFnSquare import WatermarkingFnSquare
-from waterfall.Watermark.WatermarkerBase import Watermarker
+from WatermarkingFnFourier import WatermarkingFnFourier
+from WatermarkingFnSquare import WatermarkingFnSquare
+from WatermarkerBase import Watermarker
 from sentence_transformers import SentenceTransformer
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

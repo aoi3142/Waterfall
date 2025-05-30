@@ -1,9 +1,9 @@
 from transformers import LogitsProcessor, AutoModelForCausalLM, modeling_utils
 import numpy as np
 import torch
-from .Permute import Permute
-from .WatermarkingFn import WatermarkingFn
-from .WatermarkingFnFourier import WatermarkingFnFourier
+from Permute import Permute
+from WatermarkingFn import WatermarkingFn
+from WatermarkingFnFourier import WatermarkingFnFourier
 from scipy.sparse import vstack
 from tqdm import tqdm
 import gc
