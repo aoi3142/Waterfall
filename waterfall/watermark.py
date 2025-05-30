@@ -22,6 +22,21 @@ PROMPT = (
 )
 PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
+def detect_gpu() -> str:
+    """
+    Use torch to detect if MPS, CUDA, or neither (default CPU)
+    are available.
+
+    Returns:
+        String for the torch device available.
+    """
+    if hasattr(torch, 'mps') and torch.mps.is_available():
+        return 'mps'
+    elif hasattr(torch, 'cuda') and torch.cuda.is_available():
+        return 'cuda'
+    else:
+        return 'cpu'
+
 def watermark(
     T_o: str,
     tokenizer: AutoTokenizer,
@@ -110,7 +125,7 @@ def watermark_texts(
     model: Optional[AutoModelForCausalLM] = None,
     watermarker: Optional[Watermarker] = None,
     sts_model: Optional[SentenceTransformer] = None,
-    device: str = "cuda",
+    device: str = detect_gpu(),
     num_beam_groups: int = 4,
     beams_per_group: int = 2,
     diversity_penalty: float = 0.5,
@@ -184,14 +199,6 @@ def pretty_print(
     # Extract from watermarked text
     print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
     print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
-
-def detect_gpu():
-    if hasattr(torch, 'mps') and torch.mps.is_available():
-        return 'mps'
-    elif hasattr(torch, 'cuda') and torch.cuda.is_available():
-        return 'cuda'
-    else:
-        return 'cpu'
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
