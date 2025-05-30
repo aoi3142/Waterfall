@@ -1,21 +1,23 @@
-from transformers import LogitsProcessor, AutoModelForCausalLM, modeling_utils
-import numpy as np
-import torch
-from Permute import Permute
-from WatermarkingFn import WatermarkingFn
-from WatermarkingFnFourier import WatermarkingFnFourier
-from scipy.sparse import vstack
-from tqdm import tqdm
 import gc
-import time
-from scipy.sparse import csr_matrix
-from typing import List, Tuple, Optional
-import torch
-from multiprocessing import Pool
 import os
+import time
 from collections import defaultdict
 from functools import partial
+from multiprocessing import Pool
+from typing import List, Tuple, Optional
+
+import numpy as np
+import torch
+from scipy.sparse import csr_matrix
+from scipy.sparse import vstack
+from tqdm import tqdm
+from transformers import LogitsProcessor, AutoModelForCausalLM, modeling_utils
 from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper
+
+from waterfall.permute import Permute
+from waterfall.WatermarkingFn import WatermarkingFn
+from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
+
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,

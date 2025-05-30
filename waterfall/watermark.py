@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import os
 import torch
 from typing import List, Literal, Optional, Tuple
@@ -7,9 +8,9 @@ from typing import List, Literal, Optional, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from WatermarkingFnFourier import WatermarkingFnFourier
-from WatermarkingFnSquare import WatermarkingFnSquare
-from WatermarkerBase import Watermarker
+from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
+from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
+from waterfall.WatermarkerBase import Watermarker
 from sentence_transformers import SentenceTransformer
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -98,7 +99,7 @@ def STS_scorer(
 
 def watermark_texts(
     T_os: List[str],
-    id: int,
+    id: Optional[int] = None,
     k_p: int = 1,
     kappa: float = 2.0,
     model_path: str = "meta-llama/Llama-3.1-8B-Instruct",
@@ -135,6 +136,13 @@ def watermark_texts(
                 )
 
         watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+
+    # Get the ID from the watermarker if defined
+    else:
+        id = watermarker.id
+
+    if id is None:
+        raise Exception("ID or Watermarker class must be passed to watermark_texts.")
 
     if sts_model is None:
         sts_model = SentenceTransformer(sts_model_path, device=device)
@@ -251,10 +259,11 @@ if __name__ == "__main__":
     sts_model = SentenceTransformer(sts_model_name, device=device)
 
     T_ws = watermark_texts(
-        T_os,
-        id=id, k_p=k_p, kappa=kappa,
+        T_os, id,
         watermarker=watermarker, sts_model=sts_model,
-        beams_per_group=beams_per_group, num_beam_groups=num_beam_groups, STS_scale=STS_scale,
+        beams_per_group=beams_per_group,
+        num_beam_groups=num_beam_groups,
+        STS_scale=STS_scale,
         use_tqdm=True
         )
 
