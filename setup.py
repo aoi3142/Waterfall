@@ -1,11 +1,15 @@
 from setuptools import setup, find_packages
 
+def read_requirements():
+    with open("requirements.txt") as f:
+        return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
 setup(
     name="waterfall",  # Replace with your package name
     version="0.1.0",
     packages=find_packages(),
     scripts=["waterfall/watermark.py"],
-    install_requires=[],  # Specify any dependencies if required
+    install_requires=read_requirements(),  # Specify any dependencies if required
     author="Xinyuan Niu",  # Replace with the author's name
     description="Scalable Framework for Robust Text Watermarking and Provenance for LLMs",
     long_description=open("README.md").read(),
@@ -16,5 +20,5 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.11",  # Adjust as per your version requirement
+    python_requires=">=3.10",  # Adjust as per your version requirement
 )
