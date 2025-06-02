@@ -63,11 +63,9 @@ class PerturbationProcessor(LogitsProcessor):
         prev_tokens = input_ids[:,-self.n_gram+1:].cpu().numpy()
         permutations = [self.permute.get_permutation(prev_tokens[i,:], self.id, cache=True) for i in range(prev_tokens.shape[0])]
 
-        # Compatability for MPS (Apple Metal), which doesn't support float64
-        dtype = torch.float32 if input_ids.device.type == 'mps' else torch.float64
         scores[:,:self.N] += torch.tensor(self.phi[permutations],
                                           device=scores.device,
-                                          dtype=dtype)
+                                          dtype=scores.dtype)
         return scores
 
 def indices_to_counts(N : int, dtype : np.dtype, indices : np.ndarray) -> csr_matrix:

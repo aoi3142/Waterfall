@@ -30,9 +30,9 @@ def detect_gpu() -> str:
     Returns:
         String for the torch device available.
     """
-    if hasattr(torch, 'mps') and torch.mps.is_available():
-        return 'mps'
-    elif hasattr(torch, 'cuda') and torch.cuda.is_available():
+    if torch.backends.mps.is_available():
+        return "mps"
+    elif torch.cuda.is_available():
         return 'cuda'
     else:
         return 'cpu'
