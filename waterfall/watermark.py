@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import logging
 import os
@@ -6,12 +5,12 @@ import torch
 from typing import List, Literal, Optional, Tuple
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
 from waterfall.WatermarkerBase import Watermarker
-from sentence_transformers import SentenceTransformer
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -39,7 +38,6 @@ def detect_gpu() -> str:
 
 def watermark(
     T_o: str,
-    tokenizer: AutoTokenizer,
     watermarker: Watermarker,
     sts_model: SentenceTransformer,
     num_beam_groups: int = 4,
@@ -48,7 +46,7 @@ def watermark(
     diversity_penalty: float = 0.5,
     max_new_tokens: Optional[int] = None,
 ) -> str:
-    paraphrasing_prompt = tokenizer.apply_chat_template(
+    paraphrasing_prompt = watermarker.tokenizer.apply_chat_template(
         [
             {"role":"system", "content":PROMPT},
             {"role":"user", "content":T_o},
@@ -121,8 +119,6 @@ def watermark_texts(
     torch_dtype: torch.dtype = torch.bfloat16,
     sts_model_path: str = "sentence-transformers/all-mpnet-base-v2",
     watermark_fn: Literal["fourier", "square"] = "fourier",
-    tokenizer: Optional[AutoTokenizer] = None,
-    model: Optional[AutoModelForCausalLM] = None,
     watermarker: Optional[Watermarker] = None,
     sts_model: Optional[SentenceTransformer] = None,
     device: str = detect_gpu(),
@@ -139,27 +135,26 @@ def watermark_texts(
     else:
         raise ValueError("Invalid watermarking function")
 
-    if tokenizer is None:
+    if watermarker is None:
+        assert model_path is not None, "model_path must be provided if watermarker is not passed"
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            device_map=device,
+            )
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    if watermarker is None:
-        if model is None:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch_dtype,
-                device_map=device,
-                )
-
         watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
-
-    # Get the ID from the watermarker if defined
     else:
+        tokenizer = watermarker.tokenizer
+        device = watermarker.model.device
         id = watermarker.id
 
     if id is None:
         raise Exception("ID or Watermarker class must be passed to watermark_texts.")
 
     if sts_model is None:
+        assert sts_model_path is not None, "sts_model_path must be provided if sts_model is not passed"
         sts_model = SentenceTransformer(sts_model_path, device=device)
 
     T_ws = []
@@ -167,7 +162,6 @@ def watermark_texts(
     for T_o in tqdm(T_os, desc="Watermarking texts",  disable=not use_tqdm):
         T_w = watermark(
             T_o,
-            tokenizer = tokenizer,
             watermarker = watermarker,
             sts_model = sts_model,
             num_beam_groups = num_beam_groups,
@@ -200,7 +194,7 @@ def pretty_print(
     print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
     print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
     parser.add_argument('--id',default=42,type=int,
         help='id: unique ID')
@@ -266,10 +260,11 @@ if __name__ == "__main__":
     sts_model = SentenceTransformer(sts_model_name, device=device)
 
     T_ws = watermark_texts(
-        T_os, id,
+        T_os, id, k_p, kappa,
         watermarker=watermarker, sts_model=sts_model,
         beams_per_group=beams_per_group,
         num_beam_groups=num_beam_groups,
+        diversity_penalty=diversity_penalty,
         STS_scale=STS_scale,
         use_tqdm=True
         )
@@ -294,3 +289,6 @@ if __name__ == "__main__":
             q_scores[i], q_scores[i + len(T_os)],
             k_p, extracted_k_ps[i + len(T_os)],
         )
+
+if __name__ == "__main__":
+    main()

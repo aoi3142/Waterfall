@@ -8,7 +8,11 @@ setup(
     name="waterfall",  # Replace with your package name
     version="0.1.0",
     packages=find_packages(),
-    scripts=["waterfall/watermark.py"],
+    entry_points={
+        'console_scripts': [
+            'waterfall_demo=waterfall.watermark:main',
+        ],
+    },
     install_requires=read_requirements(),  # Specify any dependencies if required
     author="Xinyuan Niu",  # Replace with the author's name
     description="Scalable Framework for Robust Text Watermarking and Provenance for LLMs",
