@@ -72,7 +72,7 @@ def watermark(
 
     return T_w
 
-def verify_text(texts: List[str], id: int, 
+def verify_texts(texts: List[str], id: int, 
                      watermarker: Optional[Watermarker] = None, 
                      k_p: Optional[int] = None, 
                      model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct"
@@ -283,7 +283,7 @@ def main():
         )
 
     # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
-    q_scores, extracted_k_ps = verify_text(T_os + T_ws, id, watermarker, k_p=k_p)
+    q_scores, extracted_k_ps = verify_texts(T_os + T_ws, id, watermarker, k_p=k_p)
 
     for i in range(len(T_os)):
         # Handle the case where this is being run
