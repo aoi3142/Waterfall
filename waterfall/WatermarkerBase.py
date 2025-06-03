@@ -1,4 +1,5 @@
 import gc
+import logging
 import os
 import time
 from collections import defaultdict
@@ -8,16 +9,15 @@ from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
-from scipy.sparse import csr_matrix
-from scipy.sparse import vstack
+from scipy.sparse import csr_matrix, vstack
 from tqdm import tqdm
-from transformers import LogitsProcessor, AutoModelForCausalLM, modeling_utils
-from transformers.generation.logits_process import TopKLogitsWarper, TopPLogitsWarper
+from transformers.modeling_utils import PreTrainedModel
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.generation.logits_process import LogitsProcessor, TopKLogitsWarper, TopPLogitsWarper
 
 from waterfall.permute import Permute
 from waterfall.WatermarkingFn import WatermarkingFn
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
-
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
@@ -29,7 +29,7 @@ class PerturbationProcessor(LogitsProcessor):
         self.N = N
         self.init_token_count = None
         self.phi = np.ones(N)
-        self.n_gram = None
+        self.n_gram = 2
 
         self.skip_watermark = False
 
@@ -40,7 +40,7 @@ class PerturbationProcessor(LogitsProcessor):
         self.init_token_count = None
         if np.allclose(self.phi,np.median(self.phi)):
             self.skip_watermark = True
-            print(f"Generating without watermark as watermarking function is flat")
+            logging.warning(f"Generating without watermark as watermarking function is flat")
         else:
             self.skip_watermark = False
 
@@ -74,8 +74,8 @@ def indices_to_counts(N : int, dtype : np.dtype, indices : np.ndarray) -> csr_ma
 
 class Watermarker:
     def __init__(self,
-                 tokenizer,
-                 model : Optional[AutoModelForCausalLM] = None,
+                 tokenizer : PreTrainedTokenizerBase,
+                 model : Optional[PreTrainedModel] = None,
                  id : int = 0,
                  kappa : float = 6,
                  k_p : int = 1,
@@ -84,7 +84,7 @@ class Watermarker:
                  ) -> None:
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
 
-        assert (model is None) or isinstance(model, modeling_utils.PreTrainedModel), f"model must be a transformers model, value provided is {type(model)}" # argument order for tokenizer and model were swapped since the original code
+        assert (model is None) or isinstance(model, PreTrainedModel), f"model must be a transformers model, value provided is {type(model)}" # argument order for tokenizer and model were swapped since the original code
 
         self.tokenizer = tokenizer
         self.model = model
@@ -106,7 +106,7 @@ class Watermarker:
 
     def generate(
             self,
-            prompt : str = None,
+            prompt : Optional[str] = None,
             tokd_input : Optional[torch.Tensor] = None,
             n_gram : Optional[int] = None,
             max_new_tokens : int = 1000,
@@ -122,6 +122,7 @@ class Watermarker:
         if n_gram is None:
             n_gram = self.n_gram
         if tokd_input is None:
+            assert prompt is not None, "Either prompt or tokd_input must be provided."
             tokd_input = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
         tokd_input = tokd_input.to(self.model.device)
         logits_processor = []
