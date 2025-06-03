@@ -60,7 +60,7 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 If using `conda` (or other pkg managers), it is highly advisable to create a new environment
 
 ```sh
-conda create -n waterfall python=3.11 --yes   `# Compatible with python>=3.10`
+conda create -n waterfall python=3.11 --yes   `# Compatible with python version higher than 3.10`
 conda activate waterfall
 ```
 
