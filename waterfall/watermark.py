@@ -1,15 +1,16 @@
 import argparse
+import logging
 import os
 import torch
 from typing import List, Literal, Optional, Tuple
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
-from Watermark.WatermarkingFnFourier import WatermarkingFnFourier
-from Watermark.WatermarkingFnSquare import WatermarkingFnSquare
-from Watermark.WatermarkerBase import Watermarker
-from sentence_transformers import SentenceTransformer
+from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
+from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
+from waterfall.WatermarkerBase import Watermarker
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -20,9 +21,23 @@ PROMPT = (
 )
 PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
+def detect_gpu() -> str:
+    """
+    Use torch to detect if MPS, CUDA, or neither (default CPU)
+    are available.
+
+    Returns:
+        String for the torch device available.
+    """
+    if torch.backends.mps.is_available():
+        return "mps"
+    elif torch.cuda.is_available():
+        return 'cuda'
+    else:
+        return 'cpu'
+
 def watermark(
     T_o: str,
-    tokenizer: AutoTokenizer,
     watermarker: Watermarker,
     sts_model: SentenceTransformer,
     num_beam_groups: int = 4,
@@ -31,7 +46,7 @@ def watermark(
     diversity_penalty: float = 0.5,
     max_new_tokens: Optional[int] = None,
 ) -> str:
-    paraphrasing_prompt = tokenizer.apply_chat_template(
+    paraphrasing_prompt = watermarker.tokenizer.apply_chat_template(
         [
             {"role":"system", "content":PROMPT},
             {"role":"user", "content":T_o},
@@ -57,8 +72,21 @@ def watermark(
 
     return T_w
 
-def verify_watermark(texts: List[str], id: int, watermarker: Watermarker, k_p: Optional[int] = None) -> Tuple[float,float]:
+def verify_texts(texts: List[str], id: int, 
+                     watermarker: Optional[Watermarker] = None, 
+                     k_p: Optional[int] = None, 
+                     model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct"
+                     ) -> Tuple[float,float]:
     """Returns the q_score and extracted k_p"""
+
+    if watermarker is None:
+        assert model_path is not None, "model_path must be provided if watermarker is not passed"
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        watermarker = Watermarker(tokenizer=tokenizer)
+    
+    if k_p is None:
+        k_p = watermarker.k_p
+
     verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
     q_score = verify_results["q_score"]
     k_p_extracted = verify_results["k_p_extracted"]
@@ -97,18 +125,16 @@ def STS_scorer(
 
 def watermark_texts(
     T_os: List[str],
-    id: int,
+    id: Optional[int] = None,
     k_p: int = 1,
     kappa: float = 2.0,
     model_path: str = "meta-llama/Llama-3.1-8B-Instruct",
     torch_dtype: torch.dtype = torch.bfloat16,
     sts_model_path: str = "sentence-transformers/all-mpnet-base-v2",
     watermark_fn: Literal["fourier", "square"] = "fourier",
-    tokenizer: Optional[AutoTokenizer] = None,
-    model: Optional[AutoModelForCausalLM] = None,
     watermarker: Optional[Watermarker] = None,
     sts_model: Optional[SentenceTransformer] = None,
-    device: str = "cuda",
+    device: str = detect_gpu(),
     num_beam_groups: int = 4,
     beams_per_group: int = 2,
     diversity_penalty: float = 0.5,
@@ -122,20 +148,26 @@ def watermark_texts(
     else:
         raise ValueError("Invalid watermarking function")
 
-    if tokenizer is None:
+    if watermarker is None:
+        assert model_path is not None, "model_path must be provided if watermarker is not passed"
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            device_map=device,
+            )
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    if watermarker is None:
-        if model is None:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch_dtype,
-                device_map=device,
-                )
-
         watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+    else:
+        tokenizer = watermarker.tokenizer
+        device = watermarker.model.device
+        id = watermarker.id
+
+    if id is None:
+        raise Exception("ID or Watermarker class must be passed to watermark_texts.")
 
     if sts_model is None:
+        assert sts_model_path is not None, "sts_model_path must be provided if sts_model is not passed"
         sts_model = SentenceTransformer(sts_model_path, device=device)
 
     T_ws = []
@@ -143,7 +175,6 @@ def watermark_texts(
     for T_o in tqdm(T_os, desc="Watermarking texts",  disable=not use_tqdm):
         T_w = watermark(
             T_o,
-            tokenizer = tokenizer,
             watermarker = watermarker,
             sts_model = sts_model,
             num_beam_groups = num_beam_groups,
@@ -176,7 +207,7 @@ def pretty_print(
     print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
     print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description='generate text watermarked with a key')
     parser.add_argument('--id',default=42,type=int,
         help='id: unique ID')
@@ -192,7 +223,7 @@ if __name__ == "__main__":
         help="original_text")
     parser.add_argument('--watermark_fn', default='fourier', type=str,
         help="watermarking function, can be 'fourier' or 'square'")
-    parser.add_argument('--device', default='cuda', type=str,
+    parser.add_argument('--device', default=detect_gpu(), type=str,
         help="device to use for generation")
     parser.add_argument('--num_beam_groups', default=4, type=int,
         help="number of beam groups for generation")
@@ -242,18 +273,27 @@ if __name__ == "__main__":
     sts_model = SentenceTransformer(sts_model_name, device=device)
 
     T_ws = watermark_texts(
-        T_os,
-        id=id, k_p=k_p, kappa=kappa,
+        T_os, id, k_p, kappa,
         watermarker=watermarker, sts_model=sts_model,
-        beams_per_group=beams_per_group, num_beam_groups=num_beam_groups, STS_scale=STS_scale,
+        beams_per_group=beams_per_group,
+        num_beam_groups=num_beam_groups,
+        diversity_penalty=diversity_penalty,
+        STS_scale=STS_scale,
         use_tqdm=True
         )
 
     # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
-    q_scores, extracted_k_ps = verify_watermark(T_os + T_ws, id, watermarker, k_p=k_p)
+    q_scores, extracted_k_ps = verify_texts(T_os + T_ws, id, watermarker, k_p=k_p)
 
     for i in range(len(T_os)):
-        print("=" * os.get_terminal_size().columns)
+        # Handle the case where this is being run
+        # in an IDE or something else without terminal size
+        try:
+            column_size = os.get_terminal_size().columns
+        except OSError as ose:
+            column_size = 80
+
+        print("=" * column_size)
 
         sts_score = STS_scorer(T_os[i], T_ws[i], sts_model)
         pretty_print(
@@ -262,3 +302,6 @@ if __name__ == "__main__":
             q_scores[i], q_scores[i + len(T_os)],
             k_p, extracted_k_ps[i + len(T_os)],
         )
+
+if __name__ == "__main__":
+    main()
