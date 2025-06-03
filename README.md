@@ -54,20 +54,32 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 
 3. Extracted $k_p$ corresponds to the perturbation function $\mathcal{F}_1$ with the highest scoring watermark score in step 2.
 
-# Run our code
-To run our code, you need to install the required packages:
-```
-pip install -r requirements.txt
+# Using our code
+
+[Optional]
+If using `conda` (or other pkg managers), it is highly advisable to create a new environment
+
+```sh
+conda create -n waterfall python=3.11 --yes   `# Compatible with python>=3.10`
+conda activate waterfall
 ```
 
-Use `watermark.py` to watermark a piece of text, and then verify the presence of the watermark in the watermarked text
+Clone and install our package
+```sh
+git clone https://github.com/aoi3142/Waterfall.git
+pip install -e Waterfall        `# Install in 'editable' mode with '-e', can be omitted`
 ```
-python watermark.py
+
+## Minimal demonstration for Waterfall watermarking
+
+Use the command `waterfall_demo` to watermark a piece of text, and then verify the presence of the watermark in the watermarked text
+```sh
+waterfall_demo
 ```
 
 Additional arguments
-```
-python watermark.py \
+```sh
+waterfall_demo \
   --T_o          "TEXT TO WATERMARK"              `# Original text to watermark`  \
   --id           42                               `# Unique watermarking ID`      \
   --k_p          1                                `# Additional perturbation key` \
@@ -76,6 +88,38 @@ python watermark.py \
   --watermark_fn fourier                          `# fourier/square watermark`    \
   --device       cuda                             `# Use cuda/cpu`
 ```
+
+## Using our code to watermark and verify
+
+To watermark texts
+
+```python
+from waterfall.watermark import watermark_texts
+
+id = 1                        # specify your watermarking ID
+texts = ["...", "..."]        # Assign texts to be watermarked
+
+watermarked_text = watermark_texts(texts, id)         # List of strings
+```
+
+To verify watermark strength of texts
+
+```python
+from waterfall.watermark import verify_text
+
+id = 1                        # specify your watermarking ID
+test_texts = ["...", "..."]   # Suspected texts to verify
+
+watermark_strength = verify_text(test_texts, id)[0]   # np array of floats
+```
+
+# Code structure
+
+- `watermark.py`              : Sample watermarking script used by with `watermark_demo` command, includes beam search and other optimizations
+- `WatermarkerBase.py`        : Underlying generation and verification code provided by `Watermarker` class
+- `WatermarkingFn.py`         : Abstract class `WatermarkingFn` for watermarking functions, inherit it to create new perturbation functions
+- `WatermarkingFnFourier.py`  : Fourier watermarking function `WatermarkingFnFourier` inherited from `WatermarkingFn`
+- `WatermarkingFnSquare.py`   : Square watermarking function `WatermarkingFnSquare` inherited from `WatermarkingFn`
 
 # BibTeX
 ```
