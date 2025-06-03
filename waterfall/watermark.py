@@ -72,8 +72,21 @@ def watermark(
 
     return T_w
 
-def verify_watermark(texts: List[str], id: int, watermarker: Watermarker, k_p: Optional[int] = None) -> Tuple[float,float]:
+def verify_text(texts: List[str], id: int, 
+                     watermarker: Optional[Watermarker] = None, 
+                     k_p: Optional[int] = None, 
+                     model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct"
+                     ) -> Tuple[float,float]:
     """Returns the q_score and extracted k_p"""
+
+    if watermarker is None:
+        assert model_path is not None, "model_path must be provided if watermarker is not passed"
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        watermarker = Watermarker(tokenizer=tokenizer)
+    
+    if k_p is None:
+        k_p = watermarker.k_p
+
     verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
     q_score = verify_results["q_score"]
     k_p_extracted = verify_results["k_p_extracted"]
@@ -270,7 +283,7 @@ def main():
         )
 
     # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
-    q_scores, extracted_k_ps = verify_watermark(T_os + T_ws, id, watermarker, k_p=k_p)
+    q_scores, extracted_k_ps = verify_text(T_os + T_ws, id, watermarker, k_p=k_p)
 
     for i in range(len(T_os)):
         # Handle the case where this is being run
