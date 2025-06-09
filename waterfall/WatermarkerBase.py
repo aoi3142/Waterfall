@@ -141,6 +141,7 @@ class Watermarker:
                 do_sample=do_sample,
                 logits_processor=logits_processor,
                 pad_token_id=self.tokenizer.eos_token_id,
+                tokenizer=self.tokenizer,
                 **kwargs
                 )
         output = output[:,tokd_input["input_ids"].shape[-1]:].cpu()

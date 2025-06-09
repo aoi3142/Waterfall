@@ -46,9 +46,10 @@ def watermark(
     sts_model: SentenceTransformer,
     num_beam_groups: int = 4,
     beams_per_group: int = 2,
-    STS_scale:float = 2.0,
+    STS_scale: float = 2.0,
     diversity_penalty: float = 0.5,
     max_new_tokens: Optional[int] = None,
+    **kwargs
 ) -> str:
     paraphrasing_prompt = watermarker.tokenizer.apply_chat_template(
         [
@@ -65,6 +66,7 @@ def watermark(
         num_beam_groups = num_beam_groups,
         num_return_sequences = num_beam_groups * beams_per_group,
         diversity_penalty = diversity_penalty,
+        **kwargs,
         )
 
     # Select best paraphrasing based on q_score and semantic similarity
@@ -144,6 +146,7 @@ def watermark_texts(
     diversity_penalty: float = 0.5,
     STS_scale:float = 2.0,
     use_tqdm: bool = False,
+    stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
 ) -> List[str]:
     if watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
@@ -191,6 +194,9 @@ def watermark_texts(
     T_ws = []
 
     for T_o in tqdm(T_os, desc="Watermarking texts",  disable=not use_tqdm):
+        if stop_at_double_newline and "\n\n" in T_o:
+            logging.warning("Text contains \\n\\n and stop_at_double_newline is set to True, replacing all \\n\\n in text.")
+            T_o = T_o.replace("\n\n", " ")  # replace double newlines with space
         T_w = watermark(
             T_o,
             watermarker = watermarker,
@@ -199,6 +205,7 @@ def watermark_texts(
             beams_per_group = beams_per_group,
             diversity_penalty = diversity_penalty,
             STS_scale = STS_scale,
+            stop_strings=["\n\n"] if stop_at_double_newline else None,
             )
         T_ws.append(T_w)
 
