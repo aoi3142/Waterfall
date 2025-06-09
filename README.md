@@ -5,7 +5,7 @@ Gregory Kang Ruey Lau*, Xinyuan Niu*, Hieu Dao, Jiangwei Chen, Chuan-Sheng Foo, 
 
 ## TL;DR: Training-free framework for text watermarking that is scalable, robust to LLM attacks, and applicable to original text of multiple types 
 
-![Alt text](Images/Problem_formulation.jpg "")
+![Alt text](https://raw.githubusercontent.com/aoi3142/Waterfall/main/Images/Problem_formulation.jpg "")
 
 1. Watermark original text $T_o$ with watermark key $\mu$ → watermarked text $T_w$ with same semantic content
 
@@ -20,7 +20,7 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 
 # Watermark process
 
-![Alt text](Images/Watermarking_process.png "")
+![Alt text](https://raw.githubusercontent.com/aoi3142/Waterfall/main/Images/Watermarking_process.png "")
 
 1. Original text $T_o$ is fed into LLM paraphraser to produce initial logits $L$.
 
@@ -32,11 +32,11 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 
 5. A token is sampled from the perturbed logits $\check{L}$ and is appended to the watermarked text.
 
-6. Append the generated token to the prompt and continue autoregressive generation (steps 1-5) until the eos token.
+6. Append the generated token to the prompt and continue autoregressive generation (steps 1-5) until the `eos` token.
 
 # Verification of un/watermarked text
 
-![Alt text](Images/Illustration.gif "Text watermarked with a sine-watermark shows the watermark signal when verified with the correct key")
+![Alt text](https://raw.githubusercontent.com/aoi3142/Waterfall/main/Images/Illustration.gif "Text watermarked with a sine-watermark shows the watermark signal when verified with the correct key")
 
 1. For each token $\hat{w}$ in the watermarked text $T_w$ (original text is not required), use the unique ID $\mu$ and preceding $n-1$ tokens to permute the token index of $\hat{w}$ from $V_o$ space into $V_w$ space.
 
@@ -54,28 +54,83 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 
 3. Extracted $k_p$ corresponds to the perturbation function $\mathcal{F}_1$ with the highest scoring watermark score in step 2.
 
-# Run our code
-To run our code, you need to install the required packages:
-```
-pip install -r requirements.txt
+# Using our code
+
+Install our package using `pip`
+```sh
+pip install waterfall
 ```
 
-Use `watermark.py` to watermark a piece of text, and then verify the presence of the watermark in the watermarked text
+## Alternative installation from source
+
+[Optional]
+If using `conda` (or other pkg managers), it is highly advisable to create a new environment
+
+```sh
+conda create -n waterfall python=3.11 --yes   `# Compatible with python version higher than 3.10`
+conda activate waterfall
 ```
-python watermark.py
+
+Clone and install our package
+```sh
+git clone https://github.com/aoi3142/Waterfall.git
+pip install -e Waterfall        `# Install in 'editable' mode with '-e', can be omitted`
 ```
+
+## Minimal demonstration for Waterfall watermarking
+
+Use the command `waterfall_demo` to watermark a piece of text, and then verify the presence of the watermark in the watermarked text
+```sh
+waterfall_demo
+```
+
+\* Ensure that your device (`cuda`/`cpu`/`mps`) has enough memory to load the model and perform inference (~18GB+ for default Llama 3.1 8B model)
 
 Additional arguments
-```
-python watermark.py \
+```sh
+waterfall_demo \
   --T_o          "TEXT TO WATERMARK"              `# Original text to watermark`  \
   --id           42                               `# Unique watermarking ID`      \
   --k_p          1                                `# Additional perturbation key` \
   --kappa        2                                `# Watermark strength`          \
   --model        meta-llama/Llama-3.1-8B-Instruct `# Paraphrasing LLM`            \
   --watermark_fn fourier                          `# fourier/square watermark`    \
-  --device       cuda                             `# Use cuda/cpu`
+  --device       cuda                             `# Use cuda/cpu/mps`
 ```
+
+\* By default, `--device` automatically selects among `cuda`/`cpu`/`mps` if not set
+
+## Using our code to watermark and verify
+
+To watermark texts
+
+```python
+from waterfall.watermark import watermark_texts
+
+id = 1                        # specify your watermarking ID
+texts = ["...", "..."]        # Assign texts to be watermarked
+
+watermarked_text = watermark_texts(texts, id)         # List of strings
+```
+
+To verify watermark strength of texts
+
+```python
+from waterfall.watermark import verify_texts
+
+id = 1                        # specify your watermarking ID
+test_texts = ["...", "..."]   # Suspected texts to verify
+
+watermark_strength = verify_texts(test_texts, id)[0]   # np array of floats
+```
+
+## Code structure
+
+- `watermark.py`              : Sample watermarking script used by with `watermark_demo` command, includes beam search and other optimizations
+- `WatermarkerBase.py`        : Underlying generation and verification code provided by `Watermarker` class
+- `WatermarkingFn.py`         : Abstract class `WatermarkingFn` for watermarking functions, inherit it to create new perturbation functions
+- `WatermarkingFnFourier.py`  : Fourier watermarking function `WatermarkingFnFourier` inherited from `WatermarkingFn`
+- `WatermarkingFnSquare.py`   : Square watermarking function `WatermarkingFnSquare` inherited from `WatermarkingFn`
 
 # BibTeX
 ```

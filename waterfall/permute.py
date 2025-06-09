@@ -2,7 +2,7 @@ import numpy as np
 import psutil
 from collections import OrderedDict
 import gc
-from typing import TypeVar
+from typing import TypeVar, Tuple
 
 T = TypeVar('T')
 
@@ -13,7 +13,7 @@ class LRUCache:
         self.cache_hits : int = 0
         self.cache_misses : int = 0
 
-    def get(self, key: int) -> T:
+    def get(self, key: Tuple) -> T | None:
         if key not in self.cache:
             self.cache_misses += 1
             return None
@@ -27,7 +27,7 @@ class LRUCache:
         gc.collect()
         return f"Cache hits: {self.cache_hits}, misses: {self.cache_misses}, rate: {self.cache_hits/(max(self.cache_hits+self.cache_misses, 1)):.2f}"
 
-    def put(self, key: int, value: T) -> None:
+    def put(self, key: Tuple, value: T) -> None:
         if key in self.cache:
             # Update the value and move it to the end.
             self.cache.move_to_end(key)
@@ -50,8 +50,7 @@ class Permute:
         cache_size = int(psutil.virtual_memory().total * 0.02 / size_per_permutation_in_bytes)  # 2% of total memory
         self.permutations.capacity = cache_size
 
-    def get_permutation(self, prev_tok, id : int = None, cache : bool = False) -> np.ndarray:
-        assert not (id is None), "id must be provided to permute"
+    def get_permutation(self, prev_tok, id : int, cache : bool = False) -> np.ndarray:
         key = (id, *prev_tok)
         if cache:
             permutation = self.permutations.get(key)
