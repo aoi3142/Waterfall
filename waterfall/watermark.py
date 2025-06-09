@@ -1,10 +1,12 @@
 import argparse
 import logging
 import os
+import gc
 import torch
 from typing import List, Literal, Optional, Tuple
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.modeling_utils import PreTrainedModel
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
@@ -20,6 +22,8 @@ PROMPT = (
     "Do not summarize."
 )
 PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
+
+waterfall_cached_watermarking_model = None  # Global variable to cache the watermarking model
 
 def detect_gpu() -> str:
     """
@@ -150,11 +154,25 @@ def watermark_texts(
 
     if watermarker is None:
         assert model_path is not None, "model_path must be provided if watermarker is not passed"
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch_dtype,
-            device_map=device,
-            )
+        global waterfall_cached_watermarking_model
+
+        if isinstance(waterfall_cached_watermarking_model, PreTrainedModel) and waterfall_cached_watermarking_model.name_or_path != model_path:
+            device = waterfall_cached_watermarking_model.device.type
+            del waterfall_cached_watermarking_model
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            elif device == "mps":
+                torch.mps.empty_cache()
+            waterfall_cached_watermarking_model = None
+
+        if waterfall_cached_watermarking_model is None:
+            waterfall_cached_watermarking_model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch_dtype,
+                device_map=device,
+                )
+        model = waterfall_cached_watermarking_model
         tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
