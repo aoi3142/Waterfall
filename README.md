@@ -121,7 +121,7 @@ from waterfall.watermark import verify_texts
 id = 1                        # specify your watermarking ID
 test_texts = ["...", "..."]   # Suspected texts to verify
 
-watermark_strength = verify_texts(test_texts, id)[0]   # np array of floats
+watermark_strength = verify_texts(test_texts, id)     # np array of floats
 ```
 
 ## Code structure

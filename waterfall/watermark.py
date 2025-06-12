@@ -3,6 +3,7 @@ import logging
 import os
 import gc
 import torch
+import numpy as np
 from typing import List, Literal, Optional, Tuple
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -81,8 +82,9 @@ def watermark(
 def verify_texts(texts: List[str], id: int, 
                      watermarker: Optional[Watermarker] = None, 
                      k_p: Optional[int] = None, 
-                     model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct"
-                     ) -> Tuple[float,float]:
+                     model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct",
+                     return_extracted_k_p: bool = False
+                     ) -> np.ndarray | Tuple[np.ndarray,np.ndarray]:
     """Returns the q_score and extracted k_p"""
 
     if watermarker is None:
@@ -93,7 +95,11 @@ def verify_texts(texts: List[str], id: int,
     if k_p is None:
         k_p = watermarker.k_p
 
-    verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=True)  # results are [text x id x k_p]
+    verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=return_extracted_k_p)  # results are [text x id x k_p]
+
+    if not return_extracted_k_p:
+        return verify_results[:,0,0]
+
     q_score = verify_results["q_score"]
     k_p_extracted = verify_results["k_p_extracted"]
 
@@ -307,7 +313,7 @@ def main():
         )
 
     # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
-    q_scores, extracted_k_ps = verify_texts(T_os + T_ws, id, watermarker, k_p=k_p)
+    q_scores, extracted_k_ps = verify_texts(T_os + T_ws, id, watermarker, k_p=k_p, return_extracted_k_p=True)
 
     for i in range(len(T_os)):
         # Handle the case where this is being run
