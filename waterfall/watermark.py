@@ -161,13 +161,12 @@ def watermark_texts(
 
         if isinstance(waterfall_cached_watermarking_model, PreTrainedModel) and waterfall_cached_watermarking_model.name_or_path != model_path:
             device = waterfall_cached_watermarking_model.device.type
-            del waterfall_cached_watermarking_model
+            waterfall_cached_watermarking_model = None
             gc.collect()
             if device == "cuda":
                 torch.cuda.empty_cache()
             elif device == "mps":
                 torch.mps.empty_cache()
-            waterfall_cached_watermarking_model = None
 
         if waterfall_cached_watermarking_model is None:
             waterfall_cached_watermarking_model = AutoModelForCausalLM.from_pretrained(
