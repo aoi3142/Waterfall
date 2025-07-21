@@ -273,6 +273,9 @@ class Watermarker:
         else:
             ids = id
 
+        if k_p is None:
+            k_p = self.k_p
+
         if isinstance(k_p, int):
             k_ps = [k_p]
         else:
