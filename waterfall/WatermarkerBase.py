@@ -99,7 +99,7 @@ class Watermarker:
         self.compute_phi(watermarkingFnClass)
 
     def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier) -> None:
-        self.watermarking_fn: WatermarkingFn = watermarkingFnClass(id = id, k_p = self.k_p, N = self.N, kappa = self.kappa)
+        self.watermarking_fn: WatermarkingFn = watermarkingFnClass(id = self.id, k_p = self.k_p, N = self.N, kappa = self.kappa)
         self.phi = self.watermarking_fn.phi
 
         self.logits_processor.set_phi(self.phi)
