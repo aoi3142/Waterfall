@@ -15,8 +15,6 @@ from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
 from waterfall.WatermarkerBase import Watermarker
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
     "Do not include any other sentences in the response, such as explanations of the paraphrasing. "

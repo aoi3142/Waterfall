@@ -22,6 +22,8 @@ from waterfall.permute import Permute
 from waterfall.WatermarkingFn import WatermarkingFn
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
                  N : int = 32000,     # Vocab size
