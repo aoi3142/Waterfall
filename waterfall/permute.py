@@ -49,16 +49,23 @@ class Permute:
         size_per_permutation_in_bytes = N * self.dtype.itemsize
         cache_size = int(psutil.virtual_memory().total * 0.02 / size_per_permutation_in_bytes)  # 2% of total memory
         self.permutations.capacity = cache_size
+        self.no_permutation = np.arange(self.N, dtype=self.dtype)
+
+    def _permute(self, key):
+        return np.random.RandomState(key).permutation(self.N).astype(self.dtype)
 
     def get_permutation(self, prev_tok, id : int, cache : bool = False) -> np.ndarray:
+        # Skip special tokens
+        if any((i >= self.N for i in prev_tok)):
+            return self.no_permutation
         key = (id, *prev_tok)
         if cache:
             permutation = self.permutations.get(key)
             if permutation is None:
-                permutation = np.random.RandomState(key).permutation(self.N).astype(self.dtype)
+                permutation = self._permute(key)
                 self.permutations.put(key, permutation)
         else:
-            permutation = np.random.RandomState(key).permutation(self.N).astype(self.dtype)
+            permutation = self._permute(key)
         return permutation
 
     def get_unshuffled_indices(self, ids, args) -> dict[int, np.ndarray]:

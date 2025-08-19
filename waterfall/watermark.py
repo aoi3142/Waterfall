@@ -8,8 +8,8 @@ from typing import List, Literal, Optional, Tuple
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.modeling_utils import PreTrainedModel
+from transformers.generation.configuration_utils import GenerationConfig
 from sentence_transformers import SentenceTransformer
-from tqdm.auto import tqdm
 
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
@@ -24,7 +24,7 @@ PROMPT = (
 )
 PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
-waterfall_cached_watermarking_model = None  # Global variable to cache the watermarking model
+waterfall_cached_watermarking_model: PreTrainedModel | None = None  # Global variable to cache the watermarking model
 
 def detect_gpu() -> str:
     """
@@ -41,47 +41,137 @@ def detect_gpu() -> str:
     else:
         return 'cpu'
 
-def watermark(
-    T_o: str,
-    watermarker: Watermarker,
-    sts_model: SentenceTransformer,
+def watermark_texts(
+    T_os: List[str],
+    id: Optional[int] = None,
+    k_p: int = 1,
+    kappa: float = 2.0,
+    model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct",
+    sts_model_path: Optional[str] = "sentence-transformers/all-mpnet-base-v2",
+    watermark_fn: Literal["fourier", "square"] = "fourier",
+    watermarker: Optional[Watermarker] = None,
+    sts_model: Optional[SentenceTransformer] = None,
+    device: str = detect_gpu(),
+    STS_scale: float = 2.0,
+    use_tqdm: bool = False,
+    do_sample: bool = False,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_new_tokens: Optional[int] = None,
     num_beam_groups: int = 4,
     beams_per_group: int = 2,
-    STS_scale: float = 2.0,
     diversity_penalty: float = 0.5,
-    max_new_tokens: Optional[int] = None,
-    **kwargs
-) -> str:
-    paraphrasing_prompt = watermarker.tokenizer.apply_chat_template(
-        [
-            {"role":"system", "content":PROMPT},
-            {"role":"user", "content":T_o},
-        ], tokenize=False, add_generation_prompt = True) + PRE_PARAPHRASED
+    stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
+) -> List[str]:
+    if watermark_fn == 'fourier':
+        watermarkingFnClass = WatermarkingFnFourier
+    elif watermark_fn == 'square':
+        watermarkingFnClass = WatermarkingFnSquare
+    else:
+        raise ValueError("Invalid watermarking function")
+
+    # Check if watermarker/model/tokenizer are loaded
+    if watermarker is None:
+        assert model_path is not None, "model_path must be provided if watermarker is not passed"
+        assert id is not None, "id must be provided if watermarker is not passed"
+        global waterfall_cached_watermarking_model
+
+        if isinstance(waterfall_cached_watermarking_model, PreTrainedModel) and waterfall_cached_watermarking_model.name_or_path != model_path:
+            device = waterfall_cached_watermarking_model.device.type
+            waterfall_cached_watermarking_model = None
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            elif device == "mps":
+                torch.mps.empty_cache()
+
+        if waterfall_cached_watermarking_model is None:
+            model = model_path
+        else:
+            model = waterfall_cached_watermarking_model
+
+        watermarker = Watermarker(model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+    else:
+        device = watermarker.model.device.type
+        id = watermarker.id
+    waterfall_cached_watermarking_model = watermarker.model
+
+    # Check if sts model is loaded
+    if sts_model is None:
+        assert sts_model_path is not None, "sts_model_path must be provided if sts_model is not passed"
+        sts_model = SentenceTransformer(sts_model_path, device=device)
+
+    # Replace all \n\n in source text if stop_at_double_newline is True
+    # Models tend to generate \n\n before endlessly repeating itself, so we want to stop the model from doing that
+    if stop_at_double_newline:
+        for i in range(len(T_os)):
+            if "\n\n" in T_os[i]:
+                logging.warning(f"Text idx {i} contains \\n\\n and stop_at_double_newline is set to True, replacing all \\n\\n in text.")
+                T_os[i] = T_os[i].replace("\n\n", " ")  # replace double newlines with space
+
+    # Add system prompt and prefill, and format into appropriate chat format
+    formatted_T_os = watermarker.format_prompt(
+        T_os,
+        system_prompt=PROMPT,
+        assistant_prefill=PRE_PARAPHRASED,
+    )
+
+    if max_new_tokens is None:
+        max_input_len = max(len(p) for p in formatted_T_os)
+        max_new_tokens = max_input_len
+
+    if do_sample:
+        assert (do_sample and temperature is not None and top_p is not None and num_beam_groups == 1 and beams_per_group == 1), \
+           "do_sample=True requires temperature, top_p, num_beam_groups=1 and beams_per_group=1"
+    else:   # Using beam search
+        assert (not do_sample and temperature is None and top_p is None and num_beam_groups >= 1 and beams_per_group >= 1), \
+           "do_sample=False requires temperature=None, top_p=None, num_beam_groups>=1 and beams_per_group>=1"
+
+    eos_token_id = watermarker.tokenizer.eos_token_id
+    # add "\n\n" tokens to eos_token_id list
+    if stop_at_double_newline:
+        eos_token_id = [eos_token_id]
+        # llama tokenizer's .vocab() has weird symbols and doesn't work with GenerationConfig's stop_strings, so we have to brute force check all tokens
+        for token_id,string in enumerate(watermarker.tokenizer.batch_decode(torch.arange(watermarker.tokenizer.vocab_size).unsqueeze(1))):
+            if "\n\n" in string:
+                eos_token_id.append(token_id)
+
+    generation_config = GenerationConfig(
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        num_beam_groups=num_beam_groups,
+        num_beams=num_beam_groups * beams_per_group,
+        diversity_penalty=diversity_penalty,
+        eos_token_id=eos_token_id,
+        num_return_sequences=num_beam_groups * beams_per_group,
+    )
 
     watermarked = watermarker.generate(
-        paraphrasing_prompt,
-        return_scores = True,
-        max_new_tokens = int(len(paraphrasing_prompt) * 1.5) if max_new_tokens is None else max_new_tokens,
-        do_sample = False, temperature=None, top_p=None,
-        num_beams = num_beam_groups * beams_per_group,
-        num_beam_groups = num_beam_groups,
-        num_return_sequences = num_beam_groups * beams_per_group,
-        diversity_penalty = diversity_penalty,
-        **kwargs,
-        )
+        prompts=formatted_T_os,
+        return_text=True,
+        return_scores=True,
+        use_tqdm=use_tqdm,
+        generation_config=generation_config,
+    )
+    T_ws = watermarked["text"]
+    # Reshape T_ws to Queries X Beams
+    num_beams = num_beam_groups * beams_per_group
+    T_ws = [T_ws[i * num_beams:(i + 1) * num_beams] for i in range(len(T_os))]
 
     # Select best paraphrasing based on q_score and semantic similarity
-    sts_scores = STS_scorer(T_o, watermarked["text"], sts_model)
-    selection_score = sts_scores * STS_scale + torch.from_numpy(watermarked["q_score"])
-    selection = torch.argmax(selection_score)
+    sts_scores = STS_scorer_batch(T_os, T_ws, sts_model)
+    selection_scores = sts_scores * STS_scale + torch.from_numpy(watermarked["q_score"]).reshape(-1, num_beams)
+    selections = torch.argmax(selection_scores, dim = -1)
 
-    T_w = watermarked["text"][selection]
+    T_ws = [T_w[selection] for T_w, selection in zip(T_ws, selections)]
 
-    return T_w
+    return T_ws
 
-def verify_texts(texts: List[str], id: int, 
-                     watermarker: Optional[Watermarker] = None, 
-                     k_p: Optional[int] = None, 
+def verify_texts(texts: List[str], id: int,
+                     watermarker: Optional[Watermarker] = None,
+                     k_p: Optional[int] = None,
                      model_path: Optional[str] = "meta-llama/Llama-3.1-8B-Instruct",
                      return_extracted_k_p: bool = False
                      ) -> np.ndarray | Tuple[np.ndarray,np.ndarray]:
@@ -89,9 +179,8 @@ def verify_texts(texts: List[str], id: int,
 
     if watermarker is None:
         assert model_path is not None, "model_path must be provided if watermarker is not passed"
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        watermarker = Watermarker(tokenizer=tokenizer)
-    
+        watermarker = Watermarker(tokenizer=model_path)
+
     if k_p is None:
         k_p = watermarker.k_p
 
@@ -134,87 +223,6 @@ def STS_scorer(
     if isinstance(test_texts, str):
         cos_sim = cos_sim.item()
     return cos_sim
-
-def watermark_texts(
-    T_os: List[str],
-    id: Optional[int] = None,
-    k_p: int = 1,
-    kappa: float = 2.0,
-    model_path: str = "meta-llama/Llama-3.1-8B-Instruct",
-    torch_dtype: torch.dtype = torch.bfloat16,
-    sts_model_path: str = "sentence-transformers/all-mpnet-base-v2",
-    watermark_fn: Literal["fourier", "square"] = "fourier",
-    watermarker: Optional[Watermarker] = None,
-    sts_model: Optional[SentenceTransformer] = None,
-    device: str = detect_gpu(),
-    num_beam_groups: int = 4,
-    beams_per_group: int = 2,
-    diversity_penalty: float = 0.5,
-    STS_scale:float = 2.0,
-    use_tqdm: bool = False,
-    stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
-) -> List[str]:
-    if watermark_fn == 'fourier':
-        watermarkingFnClass = WatermarkingFnFourier
-    elif watermark_fn == 'square':
-        watermarkingFnClass = WatermarkingFnSquare
-    else:
-        raise ValueError("Invalid watermarking function")
-
-    if watermarker is None:
-        assert model_path is not None, "model_path must be provided if watermarker is not passed"
-        global waterfall_cached_watermarking_model
-
-        if isinstance(waterfall_cached_watermarking_model, PreTrainedModel) and waterfall_cached_watermarking_model.name_or_path != model_path:
-            device = waterfall_cached_watermarking_model.device.type
-            waterfall_cached_watermarking_model = None
-            gc.collect()
-            if device == "cuda":
-                torch.cuda.empty_cache()
-            elif device == "mps":
-                torch.mps.empty_cache()
-
-        if waterfall_cached_watermarking_model is None:
-            waterfall_cached_watermarking_model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch_dtype,
-                device_map=device,
-                )
-        model = waterfall_cached_watermarking_model
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-        watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
-    else:
-        tokenizer = watermarker.tokenizer
-        device = watermarker.model.device
-        id = watermarker.id
-
-    if id is None:
-        raise Exception("ID or Watermarker class must be passed to watermark_texts.")
-
-    if sts_model is None:
-        assert sts_model_path is not None, "sts_model_path must be provided if sts_model is not passed"
-        sts_model = SentenceTransformer(sts_model_path, device=device)
-
-    T_ws = []
-
-    for T_o in tqdm(T_os, desc="Watermarking texts",  disable=not use_tqdm):
-        if stop_at_double_newline and "\n\n" in T_o:
-            logging.warning("Text contains \\n\\n and stop_at_double_newline is set to True, replacing all \\n\\n in text.")
-            T_o = T_o.replace("\n\n", " ")  # replace double newlines with space
-        T_w = watermark(
-            T_o,
-            watermarker = watermarker,
-            sts_model = sts_model,
-            num_beam_groups = num_beam_groups,
-            beams_per_group = beams_per_group,
-            diversity_penalty = diversity_penalty,
-            STS_scale = STS_scale,
-            stop_strings=["\n\n"] if stop_at_double_newline else None,
-            )
-        T_ws.append(T_w)
-
-    return T_ws
 
 def pretty_print(
         T_o: str, T_w: str,
@@ -303,13 +311,15 @@ def main():
     sts_model = SentenceTransformer(sts_model_name, device=device)
 
     T_ws = watermark_texts(
-        T_os, id, k_p, kappa,
-        watermarker=watermarker, sts_model=sts_model,
+        T_os,
+        id=id, k_p=k_p, kappa=kappa,
+        watermarker=watermarker,
+        sts_model=sts_model,
         beams_per_group=beams_per_group,
         num_beam_groups=num_beam_groups,
         diversity_penalty=diversity_penalty,
         STS_scale=STS_scale,
-        use_tqdm=True
+        use_tqdm=True,
         )
 
     # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
@@ -320,7 +330,7 @@ def main():
         # in an IDE or something else without terminal size
         try:
             column_size = os.get_terminal_size().columns
-        except OSError as ose:
+        except OSError:
             column_size = 80
 
         print("=" * column_size)
