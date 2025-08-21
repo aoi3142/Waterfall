@@ -92,10 +92,9 @@ class Watermarker:
                  n_gram : int = 2,
                  watermarkingFnClass = WatermarkingFnFourier,
                  device = None,
+                 dtype = torch.bfloat16,
                  ) -> None:
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
-
-        self.id = id
         self.k_p = k_p
         self.n_gram = n_gram
         self.kappa = kappa
@@ -116,21 +115,26 @@ class Watermarker:
 
         self.N = self.tokenizer.vocab_size
 
-        self.logits_processor = PerturbationProcessor(N = self.N, id = self.id)
-
         if isinstance(model, str):
-            self.load_model(model, device_map=device)
+            self.load_model(model, device_map=device, dtype=dtype)
         else:
             self.model = model
 
         assert (self.model is None) or isinstance(self.model, PreTrainedModel), f"model must be a transformers model, value provided is {type(self.model)}" # argument order for tokenizer and model were swapped since the original code
 
-        self.compute_phi(watermarkingFnClass)
+        self.watermarkingFnClass = watermarkingFnClass
+        self.set_id(id)
 
-    def load_model(self, model_name_or_path : str, device_map : str = "auto"):
+    def set_id(self, id : int):
+        self.id = id
+        self.logits_processor = PerturbationProcessor(N = self.N, id = self.id)
+        self.compute_phi(self.watermarkingFnClass)
+
+    def load_model(self, model_name_or_path : str, device_map : str = "auto", dtype = torch.bfloat16):
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             device_map=device_map,
+            torch_dtype=dtype,
         )
 
     def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier) -> None:
