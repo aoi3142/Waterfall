@@ -227,6 +227,7 @@ class Watermarker:
             return_scores : bool = False,
             use_tqdm : bool = False,
             batched_generate : bool = True,
+            discard_incomplete : bool = True,
             **kwargs    # Other generate parameters
             ) -> List[str] | dict:  # Returns flattened list of query x beam
 
@@ -305,7 +306,10 @@ class Watermarker:
                     tokenizer=self.tokenizer,
                     **kwargs
                     )
-                output = output[:,tokd_input_batch["input_ids"].shape[-1]:].to("cpu", non_blocking=True)
+                output = output[:,tokd_input_batch["input_ids"].shape[-1]:]
+                if discard_incomplete:
+                    output[output[:, -1] != self.tokenizer.eos_token_id] = self.tokenizer.eos_token_id
+                output = output.to("cpu", non_blocking=True)
                 outputs.append(output)
                 bar.update(tokd_input_batch["input_ids"].shape[0])
         torch.cuda.synchronize()
