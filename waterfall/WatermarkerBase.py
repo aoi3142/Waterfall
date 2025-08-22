@@ -116,7 +116,7 @@ class Watermarker:
         self.N = self.tokenizer.vocab_size
 
         if isinstance(model, str):
-            self.load_model(model, device_map=device, dtype=dtype)
+            self.load_model(model, device_map=device if device is not None else "auto", dtype=dtype)
         else:
             self.model = model
 
