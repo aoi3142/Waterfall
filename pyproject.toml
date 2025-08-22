@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "waterfall"
-version = "0.2.3"
+version = "0.2.4"
 authors = [
   { name = "Xinyuan Niu", email="aperture@outlook.sg" }
 ]
@@ -20,7 +20,7 @@ license-files = ["LICEN[CS]E*"]
 
 dependencies = [
   "accelerate>=0.29.0",
-  "numpy>=2.0.0",
+  "numpy>=1.25.0",
   "scipy>=1.13.0",
   "sentence-transformers>=3.0.0",
   "torch>=2.3.0",
