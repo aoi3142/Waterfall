@@ -56,7 +56,7 @@ Protecting intellectual property (IP) of text such as articles and code is incre
 
 # Using our code
 
-Install our package using `pip`
+Install our [PyPI package](https://pypi.org/project/waterfall/) using `pip`
 ```sh
 pip install waterfall
 ```
