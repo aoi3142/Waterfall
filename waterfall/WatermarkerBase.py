@@ -15,7 +15,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase, BatchEncoding
-from transformers.generation.logits_process import LogitsProcessor, TopKLogitsWarper, TopPLogitsWarper
+from transformers.generation.logits_process import LogitsProcessor, TopKLogitsWarper, TopPLogitsWarper, TemperatureLogitsWarper
 from transformers.generation.configuration_utils import GenerationConfig
 
 from waterfall.permute import Permute
@@ -265,19 +265,23 @@ class Watermarker:
             generation_config: GenerationConfig = kwargs["generation_config"]
             top_k = generation_config.top_k
             top_p = generation_config.top_p
+            temperature = generation_config.temperature
             num_beams = generation_config.num_beams
             diversity_penalty = generation_config.diversity_penalty
             if num_beams <= 1:
                 diversity_penalty = None
-            generation_config.update(top_p=1.0, diversity_penalty=diversity_penalty)
+            generation_config.update(top_p=1.0, temperature=None, diversity_penalty=diversity_penalty)
         else:
             top_k = kwargs.pop("top_k", None)
             top_p = kwargs.pop("top_p", None)
+            temperature = kwargs.pop("temperature", 1.0)
             num_beams = kwargs.pop("num_beams", 1)
             diversity_penalty = kwargs.pop("diversity_penalty", None)
             if num_beams <= 1:
                 kwargs["diversity_penalty"] = None
 
+        if num_beams > 1 and temperature != 1.0:
+            logits_processor.append(TemperatureLogitsWarper(float(temperature)))
         if top_k is not None and top_k != 0:
             logits_processor.append(TopKLogitsWarper(top_k))
         if top_p is not None and top_p < 1.0:

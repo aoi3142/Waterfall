@@ -129,8 +129,8 @@ def watermark_texts(
         assert (do_sample and temperature is not None and top_p is not None and num_beam_groups == 1 and beams_per_group == 1), \
            "do_sample=True requires temperature, top_p, num_beam_groups=1 and beams_per_group=1"
     else:   # Using beam search
-        assert (not do_sample and temperature is None and top_p is None and num_beam_groups >= 1 and beams_per_group >= 1), \
-           "do_sample=False requires temperature=None, top_p=None, num_beam_groups>=1 and beams_per_group>=1"
+        assert (not do_sample and num_beam_groups >= 1 and beams_per_group >= 1), \
+           "do_sample=False requires num_beam_groups>=1 and beams_per_group>=1"
 
     eos_token_id = watermarker.tokenizer.eos_token_id
     # add "\n\n" tokens to eos_token_id list
