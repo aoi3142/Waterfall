@@ -60,6 +60,7 @@ def watermark_texts(
     beams_per_group: int = 2,
     diversity_penalty: float = 0.5,
     stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
+    **kwargs,
 ) -> List[str]:
     if watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
@@ -91,7 +92,10 @@ def watermark_texts(
         watermarker = Watermarker(model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
     else:
         device = watermarker.model.device.type
-        id = watermarker.id
+        if id is not None:
+            watermarker.set_id(id)
+        else:
+            id = watermarker.id
     waterfall_cached_watermarking_model = watermarker.model
 
     # Check if sts model is loaded
@@ -144,6 +148,7 @@ def watermark_texts(
         diversity_penalty=diversity_penalty,
         eos_token_id=eos_token_id,
         num_return_sequences=num_beam_groups * beams_per_group,
+        **kwargs
     )
 
     watermarked = watermarker.generate(
@@ -152,6 +157,7 @@ def watermark_texts(
         return_scores=True,
         use_tqdm=use_tqdm,
         generation_config=generation_config,
+        use_model_defaults=False,
     )
     T_ws = watermarked["text"]
     # Reshape T_ws to Queries X Beams
@@ -179,10 +185,7 @@ def verify_texts(texts: List[str], id: int,
         assert model_path is not None, "model_path must be provided if watermarker is not passed"
         watermarker = Watermarker(tokenizer=model_path)
 
-    if k_p is None:
-        k_p = watermarker.k_p
-
-    verify_results = watermarker.verify(texts, id=[id], k_p=[k_p], return_extracted_k_p=return_extracted_k_p)  # results are [text x id x k_p]
+    verify_results = watermarker.verify(texts, id=[id], k_p=k_p, return_extracted_k_p=return_extracted_k_p)  # results are [text x id x k_p]
 
     if not return_extracted_k_p:
         return verify_results[:,0,0]
