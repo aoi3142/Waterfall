@@ -39,6 +39,17 @@ def detect_gpu() -> str:
     else:
         return 'cpu'
 
+def del_cached_model():
+    global waterfall_cached_watermarking_model
+    if isinstance(waterfall_cached_watermarking_model, PreTrainedModel):
+        device = waterfall_cached_watermarking_model.device.type
+        waterfall_cached_watermarking_model = None
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        elif device == "mps":
+            torch.mps.empty_cache()
+
 def watermark_texts(
     T_os: List[str],
     id: Optional[int] = None,
@@ -73,16 +84,8 @@ def watermark_texts(
     if watermarker is None:
         assert model_path is not None, "model_path must be provided if watermarker is not passed"
         assert id is not None, "id must be provided if watermarker is not passed"
-        global waterfall_cached_watermarking_model
-
         if isinstance(waterfall_cached_watermarking_model, PreTrainedModel) and waterfall_cached_watermarking_model.name_or_path != model_path:
-            device = waterfall_cached_watermarking_model.device.type
-            waterfall_cached_watermarking_model = None
-            gc.collect()
-            if device == "cuda":
-                torch.cuda.empty_cache()
-            elif device == "mps":
-                torch.mps.empty_cache()
+            del_cached_model()
 
         if waterfall_cached_watermarking_model is None:
             model = model_path
