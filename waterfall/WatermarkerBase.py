@@ -280,7 +280,7 @@ class Watermarker:
             if num_beams <= 1:
                 kwargs["diversity_penalty"] = None
 
-        if num_beams > 1 and temperature != 1.0:
+        if num_beams > 1 and temperature is not None and temperature != 1.0:
             logits_processor.append(TemperatureLogitsWarper(float(temperature)))
         if top_k is not None and top_k != 0:
             logits_processor.append(TopKLogitsWarper(top_k))
