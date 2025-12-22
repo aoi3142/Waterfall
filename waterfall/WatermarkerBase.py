@@ -228,6 +228,7 @@ class Watermarker:
             use_tqdm : bool = False,
             batched_generate : bool = True,
             discard_incomplete : bool = True,
+            logits_processor = [],
             **kwargs    # Other generate parameters
             ) -> List[str] | dict:  # Returns flattened list of query x beam
 
@@ -259,7 +260,6 @@ class Watermarker:
             squeezed_tokd_inputs.append(BatchEncoding({"input_ids": input_ids, "attention_mask": attention_mask}))
         tokd_inputs = squeezed_tokd_inputs
 
-        logits_processor = []
         # Ensure top_k and top_p happens before watermarking
         if "generation_config" in kwargs:
             generation_config: GenerationConfig = kwargs["generation_config"]
@@ -275,8 +275,8 @@ class Watermarker:
             top_k = kwargs.pop("top_k", None)
             top_p = kwargs.pop("top_p", None)
             temperature = kwargs.pop("temperature", 1.0)
-            num_beams = kwargs.pop("num_beams", 1)
-            diversity_penalty = kwargs.pop("diversity_penalty", None)
+            num_beams = kwargs.get("num_beams", 1)
+            diversity_penalty = kwargs.get("diversity_penalty", None)
             if num_beams <= 1:
                 kwargs["diversity_penalty"] = None
 
@@ -350,10 +350,6 @@ class Watermarker:
             decoded_output = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
             decoded_output = [i.strip() for i in decoded_output]
             return_dict["text"] = decoded_output
-
-        if is_single:
-            for k, v in return_dict.items():
-                return_dict[k] = v[0]
 
         if return_text and len(return_dict) == 1:
             return decoded_output
