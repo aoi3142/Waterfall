@@ -3,4 +3,4 @@ numpy>=1.25.0
 scipy>=1.13.0
 sentence-transformers>=3.0.0
 torch>=2.3.0
-transformers>=4.43.1,<4.57.0    # Group beam search no longer available in transformers>=4.57.0
+transformers>=4.43.1

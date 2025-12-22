@@ -24,6 +24,17 @@ from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# Check transformers version
+import transformers
+from packaging import version
+# Group beam search is shifted to transformers-community package in 4.57.0
+use_custom_group_beam_search = version.parse(transformers.__version__) >= version.parse("4.57.0")
+# Set model loading kwargs based on transformers version
+if version.parse(transformers.__version__) >= version.parse("4.56.0"):
+    model_from_pretrained_kwargs = {"dtype": "auto"}
+else:
+    model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
+
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
                  N : int = 32000,     # Vocab size
@@ -134,7 +145,7 @@ class Watermarker:
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             device_map=device_map,
-            torch_dtype=dtype,
+            **model_from_pretrained_kwargs,
         )
 
     def compute_phi(self, watermarkingFnClass = WatermarkingFnFourier) -> None:
@@ -279,6 +290,9 @@ class Watermarker:
             diversity_penalty = kwargs.get("diversity_penalty", None)
             if num_beams <= 1:
                 kwargs["diversity_penalty"] = None
+        if use_custom_group_beam_search:
+            kwargs["custom_generate"]="transformers-community/group-beam-search"
+            kwargs["trust_remote_code"]=True
 
         if num_beams > 1 and temperature is not None and temperature != 1.0:
             logits_processor.append(TemperatureLogitsWarper(float(temperature)))

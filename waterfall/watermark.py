@@ -15,6 +15,14 @@ from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
 from waterfall.WatermarkerBase import Watermarker
 
+# Check transformers version
+import transformers
+from packaging import version
+if version.parse(transformers.__version__) >= version.parse("4.56.0"):
+    model_from_pretrained_kwargs = {"dtype": "auto"}
+else:
+    model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
+
 PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
     "Do not include any other sentences in the response, such as explanations of the paraphrasing. "
@@ -306,8 +314,8 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path,
-        torch_dtype=torch.bfloat16,
         device_map=device,
+        **model_from_pretrained_kwargs,
         )
 
     watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
