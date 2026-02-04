@@ -27,13 +27,20 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Check transformers version
 import transformers
 from packaging import version
-# Group beam search is shifted to transformers-community package in 4.57.0
-use_custom_group_beam_search = version.parse(transformers.__version__) >= version.parse("4.57.0")
+
+transformers_version = version.parse(transformers.__version__)
 # Set model loading kwargs based on transformers version
-if version.parse(transformers.__version__) >= version.parse("4.56.0"):
+if transformers_version >= version.parse("4.56.0"):
     model_from_pretrained_kwargs = {"dtype": "auto"}
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
+# Group beam search is shifted to transformers-community package in 4.57.0
+use_custom_group_beam_search = transformers_version >= version.parse("4.57.0")
+# BatchEncoding to() non_blocking added in 4.48.0
+if transformers_version >= version.parse("4.48.0"):
+    batch_encoding_to_kwargs = {"non_blocking": True}
+else:
+    batch_encoding_to_kwargs = {}
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
@@ -316,7 +323,7 @@ class Watermarker:
             tokd_inputs_order = range(len(tokd_inputs))
         tokd_input_batches = []
         for i in range(0, len(tokd_inputs), max_batch_size):
-            batch = self.tokenizer.pad(tokd_inputs[i:i+max_batch_size], padding=True, padding_side="left").to(self.model.device, non_blocking=True)
+            batch = self.tokenizer.pad(tokd_inputs[i:i+max_batch_size], padding=True, padding_side="left").to(self.model.device, **batch_encoding_to_kwargs)
             tokd_input_batches.append(batch)
         torch.cuda.synchronize()
 

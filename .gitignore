@@ -1,6 +1,11 @@
-*.pyc
 .venv/
-*.egg-info
+dist/
+.vscode/
+
 /.python-version
 /.idea
-dist
+
+*.ipynb
+*.pyc
+*.egg-info
+*.sh

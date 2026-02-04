@@ -18,10 +18,17 @@ from waterfall.WatermarkerBase import Watermarker
 # Check transformers version
 import transformers
 from packaging import version
-if version.parse(transformers.__version__) >= version.parse("4.56.0"):
+transformers_version = version.parse(transformers.__version__)
+if transformers_version >= version.parse("4.56.0"):
     model_from_pretrained_kwargs = {"dtype": "auto"}
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
+if transformers_version < version.parse("5.0.0") and transformers_version >= version.parse("4.50.0"):
+    additional_generation_config = {
+        "use_model_defaults": False,
+    }
+else:
+    additional_generation_config = {}
 
 PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
@@ -168,7 +175,7 @@ def watermark_texts(
         return_scores=True,
         use_tqdm=use_tqdm,
         generation_config=generation_config,
-        use_model_defaults=False,
+        **additional_generation_config,
     )
     T_ws = watermarked["text"]
     # Reshape T_ws to Queries X Beams
