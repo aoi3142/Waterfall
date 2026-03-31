@@ -195,9 +195,11 @@ class Watermarker:
     def find_largest_batch_size(
             self,
             tokd_inputs : List[BatchEncoding],
-            logits_processor : List[LogitsProcessor] = [],
+            logits_processor : List[LogitsProcessor] = None,
             **kwargs,
         ):
+        if logits_processor is None:
+            logits_processor = []
         longest_idx = np.argmax([tokd_input["input_ids"].shape[-1] for tokd_input in tokd_inputs])
         if "generation_config" in kwargs:
             generation_config = GenerationConfig(**kwargs["generation_config"].to_dict()) # copy
@@ -246,11 +248,14 @@ class Watermarker:
             use_tqdm : bool = False,
             batched_generate : bool = True,
             discard_incomplete : bool = True,
-            logits_processor = [],
+            logits_processor : List[LogitsProcessor] = None,
             **kwargs    # Other generate parameters
             ) -> List[str] | dict:  # Returns flattened list of query x beam
 
         assert self.model is not None, "Model is not loaded. Please load the model before generating text."
+
+        if logits_processor is None:
+            logits_processor = []
 
         is_single = isinstance(prompts, str) or isinstance(tokd_inputs, torch.Tensor)
         if is_single:
