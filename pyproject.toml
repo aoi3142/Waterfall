@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "waterfall"
-version = "0.2.13"
+version = "0.2.14"
 authors = [
   { name = "Xinyuan Niu", email="aperture@outlook.sg" }
 ]
