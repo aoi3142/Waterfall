@@ -1,3 +1,5 @@
+import transformers
+from packaging import version
 import torch
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList, GenerationConfig
 from transformers.generation.utils import (
@@ -291,6 +293,24 @@ def _group_beam_search(
     this_peer_finished = False
 
     decoder_prompt_len = input_ids.shape[1]  # record the prompt length of decoder
+    is_transformers_geq_5_3_0 = version.parse(transformers.__version__) >= version.parse("5.3.0")
+
+    prefill_consumed = False
+    if is_transformers_geq_5_3_0:
+        outputs = model._prefill(
+            input_ids,
+            generation_config,
+            model_kwargs,
+            is_first_iteration=not getattr(generation_config, "is_assistant", False),
+        )
+    else:
+        outputs = None
+
+    model_forward = model.__call__
+    if hasattr(model, "get_compiled_call") and hasattr(model, "_valid_auto_compile_criteria"):
+        if model._valid_auto_compile_criteria(model_kwargs, generation_config):
+            model_forward = model.get_compiled_call(generation_config.compile_config)
+
     while model._has_unfinished_sequences(
         this_peer_finished, synced_gpus, device=input_ids.device
     ):
@@ -304,20 +324,32 @@ def _group_beam_search(
             batch_size * num_beams, dtype=torch.long, device=device
         )
 
-        # do one decoder step on all beams of all sentences in batch
-        model_inputs = model.prepare_inputs_for_generation(input_ids, **model_kwargs)
+        if not is_transformers_geq_5_3_0 or prefill_consumed:
+            # do one decoder step on all beams of all sentences in batch
+            if is_transformers_geq_5_3_0:
+                next_sequence_length = 1 if model_kwargs.get("use_cache", False) else None
+                model_inputs = model.prepare_inputs_for_generation(
+                    input_ids, next_sequence_length=next_sequence_length, **model_kwargs
+                )
+            else:
+                model_inputs = model.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
-        # prepare variable output controls (note: some models won't accept all output controls)
-        model_inputs.update(
-            {"output_attentions": output_attentions} if output_attentions else {}
-        )
-        model_inputs.update(
-            {"output_hidden_states": output_hidden_states}
-            if output_hidden_states
-            else {}
-        )
+            # prepare variable output controls (note: some models won't accept all output controls)
+            model_inputs.update(
+                {"output_attentions": output_attentions} if output_attentions else {}
+            )
+            model_inputs.update(
+                {"output_hidden_states": output_hidden_states}
+                if output_hidden_states
+                else {}
+            )
 
-        outputs = model(**model_inputs, return_dict=True)
+            if hasattr(model, "_optimize_model_for_decode"):
+                with model._optimize_model_for_decode():
+                    outputs = model_forward(**model_inputs, return_dict=True)
+            else:
+                outputs = model_forward(**model_inputs, return_dict=True)
+        prefill_consumed = True
 
         # synced_gpus: don't waste resources running the code we don't need; kwargs must be updated before skipping
         model_kwargs = model._update_model_kwargs_for_generation(
@@ -356,10 +388,10 @@ def _group_beam_search(
             group_input_ids = input_ids[batch_group_indices]
 
             # select outputs of beams of current group only
-            # No need to clone() the logits here as they will not retain outputs.logits at the end of the loop
+            # copy=True is needed to avoid keeping a hanging reference to outputs.logits which may be very large for the first iteration
             # .float() is needed to retain precision for later logits manipulations
             next_token_logits = outputs.logits[batch_group_indices, -1, :].to(
-                dtype=torch.float32, device=input_ids.device
+                copy=True, dtype=torch.float32, device=input_ids.device
             )
 
             next_token_scores = nn.functional.log_softmax(

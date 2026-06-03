@@ -45,11 +45,11 @@ if transformers_version >= version.parse("4.56.0"):
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
 # Group beam search is shifted to transformers-community package in 4.57.0
-if transformers_version >= version.parse("4.57.0"):
+if transformers_version >= version.parse("5.3.0"):
+    additional_generation_config["custom_generate"] = "group-beam-search"
+elif transformers_version >= version.parse("4.57.0"):
     additional_generation_config["custom_generate"] = "transformers-community/group-beam-search"
     additional_generation_config["trust_remote_code"] = True
-if transformers_version >= version.parse("5.3.0"):
-    additional_generation_config["next_sequence_length"] = 1
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
