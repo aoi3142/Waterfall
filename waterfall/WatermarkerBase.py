@@ -48,6 +48,8 @@ else:
 if transformers_version >= version.parse("4.57.0"):
     additional_generation_config["custom_generate"] = "transformers-community/group-beam-search"
     additional_generation_config["trust_remote_code"] = True
+if transformers_version >= version.parse("5.3.0"):
+    additional_generation_config["next_sequence_length"] = 1
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
