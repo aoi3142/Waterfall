@@ -44,9 +44,12 @@ if transformers_version >= version.parse("4.56.0"):
     model_from_pretrained_kwargs = {"dtype": "auto"}
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
-# Group beam search is shifted to transformers-community package in 4.57.0
+# Group beam search doesnt work with transformers>=5.3.0 due to changes in the generation API
+# so we use a local copy of the group beam search implementation for transformers>=5.3.0
 if transformers_version >= version.parse("5.3.0"):
-    additional_generation_config["custom_generate"] = "group-beam-search"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    additional_generation_config["custom_generate"] = os.path.join(base_dir, "group-beam-search")
+# Group beam search is shifted to transformers-community package in 4.57.0
 elif transformers_version >= version.parse("4.57.0"):
     additional_generation_config["custom_generate"] = "transformers-community/group-beam-search"
     additional_generation_config["trust_remote_code"] = True
