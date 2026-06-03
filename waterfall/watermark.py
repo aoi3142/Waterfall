@@ -81,8 +81,11 @@ def watermark_texts(
     diversity_penalty: float = 0.5,
     stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
     return_all_beams: bool = False,   # if True, will return all beams instead of just the selected one. Useful for analysis but not for general use.
+    system_prompt: Optional[str] = PROMPT,   # if not None, will add this system prompt to the beginning of the prompt. Useful for steering the generation towards a certain style or format.
+    assistant_prefill: Optional[str] = PRE_PARAPHRASED,   # if not None, will prefill the assistant's response with this text before the paraphrasing. Useful for steering the generation towards a certain style or format.
+    enable_thinking: bool = False,   # if True, will add "Let's think step by step." to the system prompt to encourage more complex reasoning. Useful for long or complex texts.
     **kwargs,
-) -> List[str]:
+) -> List[str] | List[List[str]]:
     global waterfall_cached_watermarking_model
     if watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
@@ -128,8 +131,9 @@ def watermark_texts(
     # Add system prompt and prefill, and format into appropriate chat format
     formatted_T_os = watermarker.format_prompt(
         T_os,
-        system_prompt=PROMPT,
-        assistant_prefill=PRE_PARAPHRASED,
+        system_prompt=system_prompt,
+        assistant_prefill=assistant_prefill,
+        enable_thinking=enable_thinking,
     )
 
     if max_new_tokens is None:
