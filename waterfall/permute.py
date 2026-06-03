@@ -41,13 +41,13 @@ class LRUCache:
         gc.collect()
 
 class Permute:
-    permutations = LRUCache()
     def __init__(self, N : int = 128000) -> None:
         self.N = N
         self.dtype = np.min_scalar_type(self.N)
         assert self.dtype.kind == 'u', "N must be a positive integer"
         size_per_permutation_in_bytes = N * self.dtype.itemsize
         cache_size = int(psutil.virtual_memory().total * 0.02 / size_per_permutation_in_bytes)  # 2% of total memory
+        self.permutations = LRUCache()
         self.permutations.capacity = cache_size
         self.no_permutation = np.arange(self.N, dtype=self.dtype)
 

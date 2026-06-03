@@ -22,6 +22,8 @@ from waterfall.permute import Permute
 from waterfall.WatermarkingFn import WatermarkingFn
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 
+from typing import Dict, Any
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Check transformers version
@@ -29,18 +31,23 @@ import transformers
 from packaging import version
 
 transformers_version = version.parse(transformers.__version__)
+# BatchEncoding to() non_blocking added in 4.48.0
+if transformers_version >= version.parse("4.48.0"):
+    batch_encoding_to_kwargs = {"non_blocking": True}
+else:
+    batch_encoding_to_kwargs = {}
+additional_generation_config: Dict[str, Any]= {}
+if transformers_version < version.parse("4.50.0") and transformers_version >= version.parse("4.50.0"):
+    additional_generation_config["use_model_defaults"] = False
 # Set model loading kwargs based on transformers version
 if transformers_version >= version.parse("4.56.0"):
     model_from_pretrained_kwargs = {"dtype": "auto"}
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
 # Group beam search is shifted to transformers-community package in 4.57.0
-use_custom_group_beam_search = transformers_version >= version.parse("4.57.0")
-# BatchEncoding to() non_blocking added in 4.48.0
-if transformers_version >= version.parse("4.48.0"):
-    batch_encoding_to_kwargs = {"non_blocking": True}
-else:
-    batch_encoding_to_kwargs = {}
+if transformers_version >= version.parse("4.57.0"):
+    additional_generation_config["custom_generate"] = "transformers-community/group-beam-search"
+    additional_generation_config["trust_remote_code"] = True
 
 class PerturbationProcessor(LogitsProcessor):
     def __init__(self,
@@ -167,9 +174,12 @@ class Watermarker:
             T_os : str | List[str],
             system_prompt : Optional[str] = None,
             assistant_prefill : Optional[str | List[str]] = "",
+            **kwargs,
             ) -> str | List[str]:
         if isinstance(system_prompt, str):
             _system_prompt = {"role":"system", "content":system_prompt}
+        else:
+            _system_prompt = None
         is_single = isinstance(T_os, str)
         if is_single:
             T_os = [T_os]
@@ -179,11 +189,13 @@ class Watermarker:
             assert len(assistant_prefill) == len(T_os), "Length of assistant_prefill must match length of T_os"
         formatted_prompts = []
         for T_o, prefill in zip(T_os, assistant_prefill):
+            chat = [
+                {"role":"user", "content":T_o},
+            ]
+            if _system_prompt is not None:
+                chat = [_system_prompt] + chat
             formatted_prompt : str = self.tokenizer.apply_chat_template(
-                [
-                    _system_prompt,
-                    {"role":"user", "content":T_o},
-                ], tokenize=False, add_generation_prompt = True)
+                chat, tokenize=False, add_generation_prompt = True, **kwargs)
             if prefill is not None:
                 formatted_prompt += prefill
             formatted_prompts.append(formatted_prompt)
@@ -196,17 +208,20 @@ class Watermarker:
             self,
             tokd_inputs : List[BatchEncoding],
             logits_processor : List[LogitsProcessor] = None,
-            **kwargs,
+            generation_config : Optional[GenerationConfig] = None,
         ):
         if logits_processor is None:
             logits_processor = []
         longest_idx = np.argmax([tokd_input["input_ids"].shape[-1] for tokd_input in tokd_inputs])
-        if "generation_config" in kwargs:
-            generation_config = GenerationConfig(**kwargs["generation_config"].to_dict()) # copy
+        if generation_config is not None:
+            generation_config = GenerationConfig(**generation_config.to_dict()) # copy
             max_new_tokens = generation_config.max_new_tokens
         else:
-            generation_config = GenerationConfig(**kwargs)
-            max_new_tokens = kwargs.get("max_new_tokens", 2048)
+            generation_config = GenerationConfig()
+            max_new_tokens = 2048
+        if max_new_tokens is None:
+            max_new_tokens = 2048
+            generation_config.update(max_new_tokens=max_new_tokens)
         generation_config.update(max_new_tokens=1)
         input_ids = tokd_inputs[longest_idx]["input_ids"]
         input_ids = torch.zeros(
@@ -226,6 +241,7 @@ class Watermarker:
                         generation_config=generation_config,
                         pad_token_id=self.tokenizer.eos_token_id,
                         tokenizer=self.tokenizer,
+                        **additional_generation_config,
                     )
                     max_batch_size = input_ids.shape[0]
                 except RuntimeError as e:
@@ -268,6 +284,15 @@ class Watermarker:
             assert prompts is not None, "Either prompt or tokd_input must be provided."
             tokd_inputs = [self.tokenizer(prompt, return_tensors="pt", add_special_tokens=False) for prompt in prompts]
 
+        generation_config = kwargs.pop("generation_config", None)
+        if generation_config is not None:
+            generation_config = GenerationConfig(**generation_config.to_dict())
+        else:
+            generation_config = GenerationConfig()
+        for key, value in list(kwargs.items()):
+            setattr(generation_config, key, value)
+        kwargs = {}
+
         # If tokd_input is a tensor, convert it to a BatchEncoding
         squeezed_tokd_inputs = []
         for tokd_input in tokd_inputs:
@@ -284,29 +309,16 @@ class Watermarker:
         tokd_inputs = squeezed_tokd_inputs
 
         # Ensure top_k and top_p happens before watermarking
-        if "generation_config" in kwargs:
-            generation_config: GenerationConfig = kwargs["generation_config"]
-            top_k = generation_config.top_k
-            top_p = generation_config.top_p
-            temperature = generation_config.temperature
-            num_beams = generation_config.num_beams
-            diversity_penalty = generation_config.diversity_penalty
-            if num_beams <= 1:
-                diversity_penalty = None
-            generation_config.update(top_p=1.0, temperature=None, diversity_penalty=diversity_penalty)
-        else:
-            top_k = kwargs.pop("top_k", None)
-            top_p = kwargs.pop("top_p", None)
-            temperature = kwargs.pop("temperature", 1.0)
-            num_beams = kwargs.get("num_beams", 1)
-            diversity_penalty = kwargs.get("diversity_penalty", None)
-            if num_beams <= 1:
-                kwargs["diversity_penalty"] = None
-        if use_custom_group_beam_search:
-            kwargs["custom_generate"]="transformers-community/group-beam-search"
-            kwargs["trust_remote_code"]=True
+        top_k = generation_config.top_k
+        top_p = generation_config.top_p
+        temperature = generation_config.temperature
+        num_beams = generation_config.num_beams
+        diversity_penalty = generation_config.diversity_penalty
+        if num_beams <= 1:
+            diversity_penalty = None
+        generation_config.update(top_p=1.0, top_k=None, temperature=1.0, diversity_penalty=diversity_penalty, pad_token_id=self.tokenizer.eos_token_id)
 
-        if num_beams > 1 and temperature is not None and temperature != 1.0:
+        if temperature is not None and temperature != 1.0:
             logits_processor.append(TemperatureLogitsWarper(float(temperature)))
         if top_k is not None and top_k != 0:
             logits_processor.append(TopKLogitsWarper(top_k))
@@ -316,7 +328,7 @@ class Watermarker:
             logits_processor.append(self.logits_processor)
 
         if batched_generate and len(tokd_inputs) >= 8:
-            max_batch_size = self.find_largest_batch_size(tokd_inputs, logits_processor=logits_processor, **kwargs)
+            max_batch_size = self.find_largest_batch_size(tokd_inputs, logits_processor=logits_processor, generation_config=generation_config)
         else:
             max_batch_size = 1
 
@@ -330,7 +342,8 @@ class Watermarker:
         for i in range(0, len(tokd_inputs), max_batch_size):
             batch = self.tokenizer.pad(tokd_inputs[i:i+max_batch_size], padding=True, padding_side="left").to(self.model.device, **batch_encoding_to_kwargs)
             tokd_input_batches.append(batch)
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
 
         outputs = []
         with torch.no_grad():
@@ -340,9 +353,9 @@ class Watermarker:
                 output = self.model.generate(
                     **tokd_input_batch,
                     logits_processor=logits_processor,
-                    pad_token_id=self.tokenizer.eos_token_id,
+                    generation_config=generation_config,
                     tokenizer=self.tokenizer,
-                    **kwargs
+                    **additional_generation_config,
                     )
                 output = output[:,tokd_input_batch["input_ids"].shape[-1]:]
                 if discard_incomplete:
@@ -350,7 +363,8 @@ class Watermarker:
                 output = output.to("cpu", non_blocking=True)
                 outputs.append(output)
                 bar.update(tokd_input_batch["input_ids"].shape[0])
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         outputs = [j for i in outputs for j in i]  # Flatten the list of outputs
         
         # Restore original ordering

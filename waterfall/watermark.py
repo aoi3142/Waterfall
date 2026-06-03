@@ -23,12 +23,6 @@ if transformers_version >= version.parse("4.56.0"):
     model_from_pretrained_kwargs = {"dtype": "auto"}
 else:
     model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
-if transformers_version < version.parse("5.0.0") and transformers_version >= version.parse("4.50.0"):
-    additional_generation_config = {
-        "use_model_defaults": False,
-    }
-else:
-    additional_generation_config = {}
 
 PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
@@ -86,8 +80,10 @@ def watermark_texts(
     beams_per_group: int = 2,
     diversity_penalty: float = 0.5,
     stop_at_double_newline: bool = True,    # if True, will stop generation at the first double newline. Prevent repeated paraphrasing of the same text.
+    return_all_beams: bool = False,   # if True, will return all beams instead of just the selected one. Useful for analysis but not for general use.
     **kwargs,
 ) -> List[str]:
+    global waterfall_cached_watermarking_model
     if watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
     elif watermark_fn == 'square':
@@ -107,7 +103,7 @@ def watermark_texts(
         else:
             model = waterfall_cached_watermarking_model
 
-        watermarker = Watermarker(model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
+        watermarker = Watermarker(model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass, device=device)
     else:
         device = watermarker.model.device.type
         if id is not None:
@@ -141,10 +137,12 @@ def watermark_texts(
         max_new_tokens = max_input_len
 
     if do_sample:
-        assert (do_sample and temperature is not None and top_p is not None and num_beam_groups == 1 and beams_per_group == 1), \
+        assert (do_sample and temperature is not None and top_p is not None and num_beam_groups is not None and beams_per_group is not None and
+                num_beam_groups == 1 and beams_per_group == 1), \
            "do_sample=True requires temperature, top_p, num_beam_groups=1 and beams_per_group=1"
     else:   # Using beam search
-        assert (not do_sample and num_beam_groups >= 1 and beams_per_group >= 1), \
+        assert (not do_sample and num_beam_groups is not None and beams_per_group is not None and
+                num_beam_groups >= 1 and beams_per_group >= 1), \
            "do_sample=False requires num_beam_groups>=1 and beams_per_group>=1"
 
     eos_token_id = watermarker.tokenizer.eos_token_id
@@ -175,12 +173,14 @@ def watermark_texts(
         return_scores=True,
         use_tqdm=use_tqdm,
         generation_config=generation_config,
-        **additional_generation_config,
     )
     T_ws = watermarked["text"]
     # Reshape T_ws to Queries X Beams
     num_beams = num_beam_groups * beams_per_group
     T_ws = [T_ws[i * num_beams:(i + 1) * num_beams] for i in range(len(T_os))]
+
+    if return_all_beams:
+        return T_ws
 
     # Select best paraphrasing based on q_score and semantic similarity
     sts_scores = STS_scorer_batch(T_os, T_ws, sts_model)
