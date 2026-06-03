@@ -6,12 +6,14 @@ class WatermarkingFnSquare(WatermarkingFn):
         super().__init__(id = id, k_p = k_p, N = N, kappa = kappa)
 
         self.k_N = 0
+        self.scaling_factor = 1 / self.kappa if self.kappa != 0 else 1.0
 
         if (self.N%2)==1:
+            assert self.k_p == 1, f"k_p {self.k_p} larger than available number of fns 1"
             self.k_N = 1
             self.phi = np.ones(self.N) * self.kappa
             self.phi[self.N//2:] *= -1
-            self.phis = [self.phi]
+            self.phis = self.phi[None, :]
             return
 
         N = self.N
@@ -30,8 +32,6 @@ class WatermarkingFnSquare(WatermarkingFn):
                 self.phis[i] = (-1)**(np.floor(np.arange(self.N)*2**k_p/self.N+0.5)) * self.kappa
 
         self.phi = self.phis[self.k_p-1]
-
-        self.scaling_factor = 1 / self.kappa
 
     def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         q = bins.dot(self.phis.T)
