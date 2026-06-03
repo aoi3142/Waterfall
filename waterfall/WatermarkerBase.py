@@ -48,7 +48,7 @@ else:
 # so we use a local copy of the group beam search implementation for transformers>=5.3.0
 if transformers_version >= version.parse("5.3.0"):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    additional_generation_config["custom_generate"] = os.path.join(base_dir, "group-beam-search")
+    additional_generation_config["custom_generate"] = os.path.join(base_dir, "waterfall", "group-beam-search")
 # Group beam search is shifted to transformers-community package in 4.57.0
 elif transformers_version >= version.parse("4.57.0"):
     additional_generation_config["custom_generate"] = "transformers-community/group-beam-search"
