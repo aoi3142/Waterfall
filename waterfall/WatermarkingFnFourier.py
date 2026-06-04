@@ -21,15 +21,12 @@ class WatermarkingFnFourier(WatermarkingFn):
 
         self.scaling_factor = 1
 
-    def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if isspmatrix(bins):
-            bins = bins.todense()
-        q = rfft(bins, axis=-1)
+    def _q(self, avg_cumulative_token_distribution : np.ndarray | spmatrix) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if isspmatrix(avg_cumulative_token_distribution):
+            avg_cumulative_token_distribution = avg_cumulative_token_distribution.todense()
+        q = rfft(avg_cumulative_token_distribution, axis=-1)
         q = q[:, 1:-1] if self.N % 2 == 0 else q[:, 1:]
         q = q.astype(np.complex64)
         q = np.concatenate((np.real(q), -np.imag(q)), axis=1)
         q *= self.scaling_factor
-        k_p_strength = q[:,np.array(k_p)-1]
-        k_p_ranking = ((q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)).astype(self.dtype)
-        k_p_extracted = (np.argmax(q, axis=-1) + 1).astype(self.dtype)
-        return k_p_strength, k_p_ranking, k_p_extracted
+        return q

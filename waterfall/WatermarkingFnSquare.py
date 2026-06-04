@@ -33,10 +33,7 @@ class WatermarkingFnSquare(WatermarkingFn):
 
         self.phi = self.phis[self.k_p-1]
 
-    def _q(self, bins : np.ndarray | spmatrix, k_p : List[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        q = bins.dot(self.phis.T)
+    def _q(self, avg_cumulative_token_distribution : np.ndarray | spmatrix) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        q = avg_cumulative_token_distribution.dot(self.phis.T)
         q *= self.scaling_factor
-        k_p_strength = q[:,np.array(k_p)-1]
-        k_p_ranking = ((q[...,None,:] > k_p_strength[...,None]).sum(axis=-1)).astype(self.dtype)
-        k_p_extracted = (np.argmax(q, axis=-1) + 1).astype(self.dtype)
-        return k_p_strength, k_p_ranking, k_p_extracted
+        return q
