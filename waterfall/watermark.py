@@ -4,7 +4,7 @@ import os
 import gc
 import torch
 import numpy as np
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple, Dict
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.modeling_utils import PreTrainedModel
@@ -83,9 +83,11 @@ def watermark_texts(
     return_all_beams: bool = False,   # if True, will return all beams instead of just the selected one. Useful for analysis but not for general use.
     system_prompt: Optional[str] = PROMPT,   # if not None, will add this system prompt to the beginning of the prompt. Useful for steering the generation towards a certain style or format.
     assistant_prefill: Optional[str] = PRE_PARAPHRASED,   # if not None, will prefill the assistant's response with this text before the paraphrasing. Useful for steering the generation towards a certain style or format.
-    enable_thinking: bool = False,   # if True, will add "Let's think step by step." to the system prompt to encourage more complex reasoning. Useful for long or complex texts.
+    enable_thinking: bool = False,   # passed to prompt format.
+    return_dict: bool = False,
+    eos_token_ids: Optional[List[int]] = None,   # if not None, will use these eos_token_ids for generation instead of the model's default eos_token_id. Useful for stopping generation at certain tokens such as double newlines.
     **kwargs,
-) -> List[str] | List[List[str]]:
+) -> List[str] | List[List[str]] | Dict[str, List[str] | torch.Tensor]:
     global waterfall_cached_watermarking_model
     if watermark_fn == 'fourier':
         watermarkingFnClass = WatermarkingFnFourier
@@ -149,14 +151,15 @@ def watermark_texts(
                 num_beam_groups >= 1 and beams_per_group >= 1), \
            "do_sample=False requires num_beam_groups>=1 and beams_per_group>=1"
 
-    eos_token_id = watermarker.tokenizer.eos_token_id
+    if eos_token_ids is None:
+        eos_token_ids = []
+    eos_token_ids.append(watermarker.tokenizer.eos_token_id)
     # add "\n\n" tokens to eos_token_id list
     if stop_at_double_newline:
-        eos_token_id = [eos_token_id]
         # llama tokenizer's .vocab() has weird symbols and doesn't work with GenerationConfig's stop_strings, so we have to brute force check all tokens
         for token_id,string in enumerate(watermarker.tokenizer.batch_decode(torch.arange(watermarker.tokenizer.vocab_size).unsqueeze(1))):
             if "\n\n" in string:
-                eos_token_id.append(token_id)
+                eos_token_ids.append(token_id)
 
     generation_config = GenerationConfig(
         max_new_tokens=max_new_tokens,
@@ -166,7 +169,7 @@ def watermark_texts(
         num_beam_groups=num_beam_groups,
         num_beams=num_beam_groups * beams_per_group,
         diversity_penalty=diversity_penalty,
-        eos_token_id=eos_token_id,
+        eos_token_id=eos_token_ids,
         num_return_sequences=num_beam_groups * beams_per_group,
         **kwargs
     )
@@ -175,24 +178,36 @@ def watermark_texts(
         prompts=formatted_T_os,
         return_text=True,
         return_scores=True,
+        return_tokens=True,
         use_tqdm=use_tqdm,
         generation_config=generation_config,
     )
     T_ws = watermarked["text"]
+    tokens = watermarked["tokens"]
     # Reshape T_ws to Queries X Beams
     num_beams = num_beam_groups * beams_per_group
     T_ws = [T_ws[i * num_beams:(i + 1) * num_beams] for i in range(len(T_os))]
 
-    if return_all_beams:
+    if return_all_beams and not return_dict:
         return T_ws
 
     # Select best paraphrasing based on q_score and semantic similarity
+    q_scores = torch.from_numpy(watermarked["q_score"]).reshape(-1, num_beams)
     sts_scores = STS_scorer_batch(T_os, T_ws, sts_model)
-    selection_scores = sts_scores * STS_scale + torch.from_numpy(watermarked["q_score"]).reshape(-1, num_beams)
+    selection_scores = sts_scores * STS_scale + q_scores
     selections = torch.argmax(selection_scores, dim = -1)
 
-    T_ws = [T_w[selection] for T_w, selection in zip(T_ws, selections)]
-
+    if not return_all_beams:
+        T_ws = [T_w[selection.item()] for T_w, selection in zip(T_ws, selections)]
+        if return_dict:
+            tokens = [token[selection.item()] for token, selection in zip(tokens, selections)]
+            batch_indices = torch.arange(len(selections))
+            q_scores = q_scores[batch_indices, selections]
+            sts_scores = sts_scores[batch_indices, selections]
+            selection_scores = selection_scores[batch_indices, selections]
+            selections = None
+    if return_dict:
+        return {"T_ws": T_ws, "tokens": tokens, "sts_scores": sts_scores, "q_scores": q_scores, "selection_scores": selection_scores, "selections": selections}
     return T_ws
 
 def verify_texts(texts: List[str], id: int,

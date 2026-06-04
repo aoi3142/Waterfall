@@ -129,6 +129,13 @@ class Watermarker:
         self.n_gram = n_gram
         self.kappa = kappa
 
+        if isinstance(model, str):
+            self.load_model(model, device_map=device if device is not None else "auto", dtype=dtype)
+        else:
+            self.model = model
+
+        assert (self.model is None) or isinstance(self.model, PreTrainedModel), f"model must be a transformers model, value provided is {type(self.model)}"
+
         if tokenizer is None:
             if isinstance(model, str):
                 self.tokenizer = AutoTokenizer.from_pretrained(model)
@@ -144,13 +151,6 @@ class Watermarker:
         self.tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
 
         self.N = self.tokenizer.vocab_size
-
-        if isinstance(model, str):
-            self.load_model(model, device_map=device if device is not None else "auto", dtype=dtype)
-        else:
-            self.model = model
-
-        assert (self.model is None) or isinstance(self.model, PreTrainedModel), f"model must be a transformers model, value provided is {type(self.model)}" # argument order for tokenizer and model were swapped since the original code
 
         self.watermarkingFnClass = watermarkingFnClass
         self.set_id(id)
