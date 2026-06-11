@@ -332,53 +332,76 @@ class Watermarker:
         if self.kappa != 0:
             logits_processor.append(self.logits_processor)
 
-        if batched_generate and len(tokd_inputs) >= 8:
-            max_batch_size = self.find_largest_batch_size(tokd_inputs, logits_processor=logits_processor, generation_config=generation_config)
-        else:
-            max_batch_size = 1
+        max_batch_size = min(16, len(tokd_inputs)) if batched_generate else 1
 
-        # Group inputs by token length
+        # Group inputs by token length to reduce padding inside each dynamic batch.
         if max_batch_size > 1:
             tokd_inputs_order = sorted(range(len(tokd_inputs)), key=lambda i: tokd_inputs[i]["input_ids"].shape[-1])
             tokd_inputs = [tokd_inputs[i] for i in tokd_inputs_order]
         else:
-            tokd_inputs_order = range(len(tokd_inputs))
-        tokd_input_batches = []
-        for i in range(0, len(tokd_inputs), max_batch_size):
-            batch = self.tokenizer.pad(tokd_inputs[i:i+max_batch_size], padding=True, padding_side="left").to(self.model.device, **batch_encoding_to_kwargs)
-            tokd_input_batches.append(batch)
+            tokd_inputs_order = list(range(len(tokd_inputs)))
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        outputs = []
+        num_return_sequences = generation_config.num_return_sequences or 1
+        outputs = [None] * (len(tokd_inputs) * num_return_sequences)
         with torch.no_grad():
             bar = tqdm(total=len(tokd_inputs), desc="Generating text", disable=not use_tqdm)
-            for tokd_input_batch in tokd_input_batches:
-                self.logits_processor.reset(n_gram)
-                output = self.model.generate(
-                    **tokd_input_batch,
-                    logits_processor=logits_processor,
-                    generation_config=generation_config,
-                    tokenizer=self.tokenizer,
-                    **additional_generation_config,
-                    )
+            batch_start = 0
+            batch_size = max_batch_size
+            while batch_start < len(tokd_inputs):
+                current_batch_size = min(batch_size, len(tokd_inputs) - batch_start)
+                current_tokd_inputs = tokd_inputs[batch_start:batch_start + current_batch_size]
+                tokd_input_batch = self.tokenizer.pad(current_tokd_inputs, padding=True, padding_side="left").to(self.model.device, **batch_encoding_to_kwargs)
+
+                try:
+                    self.logits_processor.reset(n_gram)
+                    output = self.model.generate(
+                        **tokd_input_batch,
+                        logits_processor=logits_processor,
+                        generation_config=generation_config,
+                        tokenizer=self.tokenizer,
+                        **additional_generation_config,
+                        )
+                except RuntimeError as e:
+                    if "out of memory" not in str(e).lower():
+                        raise
+                    del tokd_input_batch
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if current_batch_size == 1:
+                        raise
+                    # batch_size = max(1, current_batch_size // 2)
+                    # reduce batch size to next lower power of 2
+                    batch_size = 2 ** (current_batch_size.bit_length() - 2)
+                    print(f"CUDA out of memory at batch size {current_batch_size}, reducing to {batch_size}")
+                    continue
+
                 output = output[:,tokd_input_batch["input_ids"].shape[-1]:]
                 if discard_incomplete:
-                    output[output[:, -1] != self.tokenizer.eos_token_id] = self.tokenizer.eos_token_id
+                    eos_mask = output.eq(self.tokenizer.eos_token_id)
+                    rows_with_eos = eos_mask.any(dim=1)
+                    if bool(rows_with_eos.any()):
+                        first_eos = eos_mask.float().argmax(dim=1)
+                        positions = torch.arange(output.shape[1], device=output.device).unsqueeze(0)
+                        output[rows_with_eos.unsqueeze(1) & (positions > first_eos.unsqueeze(1))] = self.tokenizer.eos_token_id
                 output = output.to("cpu", non_blocking=True)
-                outputs.append(output)
-                bar.update(tokd_input_batch["input_ids"].shape[0])
+                assert output.shape[0] == current_batch_size * num_return_sequences, (
+                    "Generated output count does not match input count x num_return_sequences"
+                )
+                output = list(output)
+                for i, idx in enumerate(tokd_inputs_order[batch_start:batch_start + current_batch_size]):
+                    output_start = i * num_return_sequences
+                    output_end = output_start + num_return_sequences
+                    reordered_start = idx * num_return_sequences
+                    reordered_end = reordered_start + num_return_sequences
+                    outputs[reordered_start:reordered_end] = output[output_start:output_end]
+                bar.update(current_batch_size)
+                batch_start += current_batch_size
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        outputs = [j for i in outputs for j in i]  # Flatten the list of outputs
-        
-        # Restore original ordering
-        if max_batch_size > 1:
-            reordered_outputs = [None] * len(outputs)
-            num_return_sequences = len(outputs) // len(tokd_inputs)
-            for i, idx in enumerate(tokd_inputs_order):
-                reordered_outputs[idx * num_return_sequences:(idx + 1) * num_return_sequences] = outputs[i * num_return_sequences:(i + 1) * num_return_sequences]
-            outputs = reordered_outputs
+        assert all(output is not None for output in outputs), "Some generated outputs were not assigned"
 
         return_dict = {}
 

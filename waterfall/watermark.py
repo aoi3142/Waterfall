@@ -86,6 +86,7 @@ def watermark_texts(
     enable_thinking: bool = False,   # passed to prompt format.
     return_dict: bool = False,
     eos_token_ids: Optional[List[int]] = None,   # if not None, will use these eos_token_ids for generation instead of the model's default eos_token_id. Useful for stopping generation at certain tokens such as double newlines.
+    batched: bool = False,
     **kwargs,
 ) -> List[str] | List[List[str]] | Dict[str, List[str] | torch.Tensor]:
     global waterfall_cached_watermarking_model
@@ -181,6 +182,7 @@ def watermark_texts(
         return_tokens=True,
         use_tqdm=use_tqdm,
         generation_config=generation_config,
+        batched_generate=batched,
     )
     T_ws = watermarked["text"]
     tokens = watermarked["tokens"]
