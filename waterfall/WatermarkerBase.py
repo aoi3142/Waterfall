@@ -383,7 +383,10 @@ class Watermarker:
         return_dict = {}
 
         if return_scores:
-            cumulative_token_count = self.get_cumulative_token_count(self.id, outputs, n_gram = n_gram, return_dense=False)
+            # Generated tokens might be tokenized differently during verification,
+            # so we run the watermark verification on the tokenization of the generated text (instead of tokens) to get accurate scores
+            re_tokenized_outputs = [self.tokenizer(output, add_special_tokens=False)["input_ids"] for output in self.tokenizer.batch_decode(outputs, skip_special_tokens=True)]
+            cumulative_token_count = self.get_cumulative_token_count(self.id, re_tokenized_outputs, n_gram = n_gram, return_dense=False)
             cumulative_token_count = vstack([i[0] for i in cumulative_token_count], format="csr")
             q_score, _, _ = self.watermarking_fn.q(cumulative_token_count, k_p = [self.k_p], use_tqdm=False)
             return_dict["q_score"] = q_score
