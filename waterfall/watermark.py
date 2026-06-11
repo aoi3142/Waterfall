@@ -140,7 +140,10 @@ def watermark_texts(
     )
 
     if max_new_tokens is None:
-        max_input_len = max(len(p) for p in formatted_T_os)
+        max_input_len = max(
+            len(watermarker.tokenizer(prompt, add_special_tokens=False)["input_ids"])
+            for prompt in formatted_T_os
+        )
         max_new_tokens = max_input_len
 
     if do_sample:
@@ -152,8 +155,7 @@ def watermark_texts(
                 num_beam_groups >= 1 and beams_per_group >= 1), \
            "do_sample=False requires num_beam_groups>=1 and beams_per_group>=1"
 
-    if eos_token_ids is None:
-        eos_token_ids = []
+    eos_token_ids = list(eos_token_ids) if eos_token_ids is not None else []
     eos_token_ids.append(watermarker.tokenizer.eos_token_id)
     # add "\n\n" tokens to eos_token_id list
     if stop_at_double_newline:
@@ -189,6 +191,7 @@ def watermark_texts(
     # Reshape T_ws to Queries X Beams
     num_beams = num_beam_groups * beams_per_group
     T_ws = [T_ws[i * num_beams:(i + 1) * num_beams] for i in range(len(T_os))]
+    tokens = [tokens[i * num_beams:(i + 1) * num_beams] for i in range(len(T_os))]
 
     if return_all_beams and not return_dict:
         return T_ws
@@ -202,7 +205,7 @@ def watermark_texts(
     if not return_all_beams:
         T_ws = [T_w[selection.item()] for T_w, selection in zip(T_ws, selections)]
         if return_dict:
-            tokens = [token[selection.item()] for token, selection in zip(tokens, selections)]
+            tokens = [token_group[selection.item()] for token_group, selection in zip(tokens, selections)]
             batch_indices = torch.arange(len(selections))
             q_scores = q_scores[batch_indices, selections]
             sts_scores = sts_scores[batch_indices, selections]

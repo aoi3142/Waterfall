@@ -415,15 +415,15 @@ def _group_beam_search(
 
 
             # reshape for beam search
+            # Sample 1 + len(eos_token_id) next tokens for each beam so we have at least 1 non eos token per beam.
+            n_eos_tokens = eos_token_id.shape[0] if eos_token_id is not None else 0
+            num_tokens_to_select = max(2, 1 + n_eos_tokens) * group_size
             next_token_scores = next_token_scores.view(
                 batch_size, group_size * vocab_size
             )
-
-            # Sample 1 + len(eos_token_id) next tokens for each beam so we have at least 1 non eos token per beam.
-            n_eos_tokens = eos_token_id.shape[0] if eos_token_id is not None else 0
             next_token_scores, next_tokens = torch.topk(
                 next_token_scores,
-                max(2, 1 + n_eos_tokens) * group_size,
+                num_tokens_to_select,
                 dim=1,
                 largest=True,
                 sorted=True,
@@ -457,7 +457,8 @@ def _group_beam_search(
                     for i in range(len(beam_indices[0]))
                 )
 
-            input_ids[batch_group_indices] = group_input_ids[beam_idx]
+            selected_input_ids = group_input_ids[beam_idx]
+            input_ids[batch_group_indices] = selected_input_ids
             group_input_ids = torch.cat(
                 [group_input_ids[beam_idx, :], beam_next_tokens.unsqueeze(-1)], dim=-1
             )

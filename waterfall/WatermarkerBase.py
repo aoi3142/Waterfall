@@ -122,7 +122,6 @@ class Watermarker:
                  n_gram : int = 2,
                  watermarkingFnClass = WatermarkingFnFourier,
                  device = None,
-                 dtype = torch.bfloat16,
                  ) -> None:
         assert kappa >= 0, f"kappa must be >= 0, value provided is {kappa}"
         self.k_p = k_p
@@ -130,7 +129,7 @@ class Watermarker:
         self.kappa = kappa
 
         if isinstance(model, str):
-            self.load_model(model, device_map=device if device is not None else "auto", dtype=dtype)
+            self.load_model(model, device_map=device if device is not None else "auto")
         else:
             self.model = model
 
@@ -157,10 +156,13 @@ class Watermarker:
 
     def set_id(self, id : int):
         self.id = id
-        self.logits_processor = PerturbationProcessor(N = self.N, id = self.id)
+        self.logits_processor = PerturbationProcessor(
+            N=self.N,
+            id=self.id,
+        )
         self.compute_phi(self.watermarkingFnClass)
 
-    def load_model(self, model_name_or_path : str, device_map : str = "auto", dtype = torch.bfloat16):
+    def load_model(self, model_name_or_path : str, device_map : str = "auto"):
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             device_map=device_map,
@@ -270,6 +272,7 @@ class Watermarker:
             batched_generate : bool = True,
             discard_incomplete : bool = True,
             logits_processor : List[LogitsProcessor] = None,
+            use_cache : bool = True,
             **kwargs    # Other generate parameters
             ) -> List[str] | dict:  # Returns flattened list of query x beam
 
@@ -277,8 +280,10 @@ class Watermarker:
 
         if logits_processor is None:
             logits_processor = []
+        else:
+            logits_processor = list(logits_processor)
 
-        is_single = isinstance(prompts, str) or isinstance(tokd_inputs, torch.Tensor)
+        is_single = isinstance(prompts, str) or isinstance(tokd_inputs, (torch.Tensor, BatchEncoding))
         if is_single:
             prompts = [prompts] if prompts is not None else None
             tokd_inputs = [tokd_inputs] if tokd_inputs is not None else None
@@ -308,9 +313,10 @@ class Watermarker:
                 input_ids = tokd_input["input_ids"]
                 attention_mask = tokd_input["attention_mask"]
             if input_ids.ndim == 2:
-                input_ids = input_ids.squeeze()
-                attention_mask = attention_mask.squeeze()
-            squeezed_tokd_inputs.append(BatchEncoding({"input_ids": input_ids, "attention_mask": attention_mask}))
+                for row_input_ids, row_attention_mask in zip(input_ids, attention_mask):
+                    squeezed_tokd_inputs.append(BatchEncoding({"input_ids": row_input_ids, "attention_mask": row_attention_mask}))
+            else:
+                squeezed_tokd_inputs.append(BatchEncoding({"input_ids": input_ids, "attention_mask": attention_mask}))
         tokd_inputs = squeezed_tokd_inputs
 
         # Ensure top_k and top_p happens before watermarking
@@ -321,7 +327,7 @@ class Watermarker:
         diversity_penalty = generation_config.diversity_penalty
         if num_beams <= 1:
             diversity_penalty = None
-        generation_config.update(top_p=1.0, top_k=None, temperature=1.0, diversity_penalty=diversity_penalty, pad_token_id=self.tokenizer.eos_token_id)
+        generation_config.update(top_p=1.0, top_k=None, temperature=1.0, diversity_penalty=diversity_penalty, pad_token_id=self.tokenizer.eos_token_id, use_cache=use_cache)
 
         if temperature is not None and temperature != 1.0:
             logits_processor.append(TemperatureLogitsWarper(float(temperature)))
