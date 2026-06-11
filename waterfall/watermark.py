@@ -244,12 +244,15 @@ def STS_scorer_batch(
     assert all(len(test_texts[0]) == len(sublist) for sublist in test_texts[1:]), "All sublists in test_texts must have the same length"
 
     all_text = original_texts + [text for sublist in test_texts for text in sublist]
-    embeddings = sts_model.encode(all_text, convert_to_tensor=True, prompt_name="STS" if "STS" in sts_model.prompts else None)
+    with torch.no_grad():
+        embeddings = sts_model.encode(all_text, convert_to_tensor=True, prompt_name="STS" if "STS" in sts_model.prompts else None)
     original_embeddings = embeddings[:len(original_texts)]
     test_embeddings = embeddings[len(original_texts):].reshape(len(test_texts), -1, embeddings.shape[1])
-    cos_sim = [sts_model.similarity(original_embeddings[i], test_embeddings[i]) for i in range(len(original_texts))]
-    cos_sim = torch.concat(cos_sim, dim=0).cpu()
-    return cos_sim
+    num_candidates = test_embeddings.shape[1]
+    original_embeddings = original_embeddings.repeat_interleave(num_candidates, dim=0)
+    test_embeddings = test_embeddings.flatten(start_dim=0, end_dim=1)
+    sts_scores = sts_model.similarity(original_embeddings, test_embeddings).diagonal().reshape(len(original_texts), num_candidates)
+    return sts_scores.cpu()
 
 def STS_scorer(
     original_text: str,
