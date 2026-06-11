@@ -32,6 +32,7 @@ PROMPT = (
 PRE_PARAPHRASED = "Here is a paraphrased version of the text while preserving the semantic similarity:\n\n"
 
 waterfall_cached_watermarking_model: PreTrainedModel | None = None  # Global variable to cache the watermarking model
+_double_newline_eos_token_cache: Dict[Tuple[str, int], Tuple[int, ...]] = {}
 
 def detect_gpu() -> str:
     """
@@ -160,9 +161,22 @@ def watermark_texts(
     # add "\n\n" tokens to eos_token_id list
     if stop_at_double_newline:
         # llama tokenizer's .vocab() has weird symbols and doesn't work with GenerationConfig's stop_strings, so we have to brute force check all tokens
-        for token_id,string in enumerate(watermarker.tokenizer.batch_decode(torch.arange(watermarker.tokenizer.vocab_size).unsqueeze(1))):
-            if "\n\n" in string:
-                eos_token_ids.append(token_id)
+        tokenizer_name = getattr(watermarker.tokenizer, "name_or_path", "") or watermarker.tokenizer.__class__.__name__
+        cache_key = (tokenizer_name, watermarker.tokenizer.vocab_size)
+        double_newline_ids = _double_newline_eos_token_cache.get(cache_key)
+        if double_newline_ids is None:
+            double_newline_ids = tuple(
+                token_id
+                for token_id, string in enumerate(
+                    watermarker.tokenizer.batch_decode(
+                        torch.arange(watermarker.tokenizer.vocab_size).unsqueeze(1)
+                    )
+                )
+                if "\n\n" in string
+            )
+            _double_newline_eos_token_cache[cache_key] = double_newline_ids
+        eos_token_ids.extend(double_newline_ids)
+    eos_token_ids = list(dict.fromkeys(eos_token_ids))
 
     generation_config = GenerationConfig(
         max_new_tokens=max_new_tokens,
