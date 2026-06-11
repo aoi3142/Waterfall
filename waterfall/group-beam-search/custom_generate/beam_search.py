@@ -269,7 +269,7 @@ class BeamSearchScorer(BeamScorer):
         self._beam_hyps = [
             BeamHypotheses(
                 num_beams=self.group_size,
-                length_penalty=self.length_penalty,
+                length_penalty=self.length_penalty if length_penalty is not None else 0.0,
                 early_stopping=self.do_early_stopping,
                 max_length=max_length,
             )
