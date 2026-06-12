@@ -1,12 +1,9 @@
-import argparse
 import logging
-import os
 import gc
 import torch
 import numpy as np
 from typing import List, Literal, Optional, Tuple, Dict
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.modeling_utils import PreTrainedModel
 from transformers.generation.configuration_utils import GenerationConfig
 from sentence_transformers import SentenceTransformer
@@ -14,15 +11,7 @@ from sentence_transformers import SentenceTransformer
 from waterfall.WatermarkingFnFourier import WatermarkingFnFourier
 from waterfall.WatermarkingFnSquare import WatermarkingFnSquare
 from waterfall.WatermarkerBase import Watermarker
-
-# Check transformers version
-import transformers
-from packaging import version
-transformers_version = version.parse(transformers.__version__)
-if transformers_version >= version.parse("4.56.0"):
-    model_from_pretrained_kwargs = {"dtype": "auto"}
-else:
-    model_from_pretrained_kwargs = {"torch_dtype": torch.bfloat16}
+from waterfall.sts import STS_scorer, STS_scorer_batch
 
 PROMPT = (
     "Paraphrase the user provided text while preserving semantic similarity. "
@@ -251,158 +240,10 @@ def verify_texts(texts: List[str], id: int,
 
     return q_score[:,0,0], k_p_extracted[:, 0]
 
-def STS_scorer_batch(
-    original_texts: List[str],
-    test_texts: List[List[str]],
-    sts_model: SentenceTransformer
-) -> torch.Tensor:
+def main() -> None:
+    from waterfall.cli import main as cli_main
 
-    assert len(original_texts) == len(test_texts), "original_texts and test_texts must have the same length"
-    assert all(len(test_texts[0]) == len(sublist) for sublist in test_texts[1:]), "All sublists in test_texts must have the same length"
-
-    all_text = original_texts + [text for sublist in test_texts for text in sublist]
-    with torch.no_grad():
-        embeddings = sts_model.encode(all_text, convert_to_tensor=True, prompt_name="STS" if "STS" in sts_model.prompts else None)
-    original_embeddings = embeddings[:len(original_texts)]
-    test_embeddings = embeddings[len(original_texts):].reshape(len(test_texts), -1, embeddings.shape[1])
-    num_candidates = test_embeddings.shape[1]
-    original_embeddings = original_embeddings.repeat_interleave(num_candidates, dim=0)
-    test_embeddings = test_embeddings.flatten(start_dim=0, end_dim=1)
-    sts_scores = sts_model.similarity(original_embeddings, test_embeddings).diagonal().reshape(len(original_texts), num_candidates)
-    return sts_scores.cpu()
-
-def STS_scorer(
-    original_text: str,
-    test_texts: str | List[str],
-    sts_model: SentenceTransformer
-) -> float | torch.Tensor:
-    cos_sim = STS_scorer_batch(
-        original_texts=[original_text],
-        test_texts=[[test_texts] if isinstance(test_texts, str) else test_texts],
-        sts_model=sts_model
-    )[0]
-    if isinstance(test_texts, str):
-        cos_sim = cos_sim.item()
-    return cos_sim
-
-def pretty_print(
-        T_o: str, T_w: str,
-        sts_score: float,
-        T_o_q_score: float, T_w_q_score: float,
-        k_p: int, T_w_k_p: int,
-        ) -> None:
-    print(f"\nOriginal text T_o:\n\n{T_o}\n")
-    print(f"\nWatermarked text T_w:\n\n{T_w}\n")
-
-    # Original text
-    print(f"Verification score of T_o: \033[93m{T_o_q_score:.4f}\033[0m")
-
-    # Watermarked text
-    print(f"Verification score of T_w: \033[92m{T_w_q_score:.4f}\033[0m\n")
-
-    print(f"STS score of T_w         : \033[94m{sts_score:.4f}\033[0m\n")
-
-    # Extract from watermarked text
-    print(f"Watermarking k_p         : \033[95m{k_p}\033[0m")
-    print(f"Extracted k_p from T_w   : \033[96m{T_w_k_p}\033[0m\n")
-
-def main():
-    parser = argparse.ArgumentParser(description='generate text watermarked with a key')
-    parser.add_argument('--id',default=42,type=int,
-        help='id: unique ID')
-    parser.add_argument('--kappa',default=2.,type=float,
-        help='kappa: watermarking strength')
-    parser.add_argument('--k_p', default=1, type=int,
-        help="k_p: Perturbation key")
-    parser.add_argument('--model', default='meta-llama/Llama-3.1-8B-Instruct', type=str,
-        help="watermarking model")
-    parser.add_argument('--sts_model', default='sentence-transformers/all-mpnet-base-v2', type=str,
-        help="STS model")
-    parser.add_argument('--T_o', default=None, type=str,
-        help="original_text")
-    parser.add_argument('--watermark_fn', default='fourier', type=str,
-        help="watermarking function, can be 'fourier' or 'square'")
-    parser.add_argument('--device', default=detect_gpu(), type=str,
-        help="device to use for generation")
-    parser.add_argument('--num_beam_groups', default=4, type=int,
-        help="number of beam groups for generation")
-    parser.add_argument('--beams_per_group', default=2, type=int,
-        help="number of beams per group for generation")
-    parser.add_argument('--diversity_penalty', default=0.5, type=float,
-        help="diversity penalty for group beam search")
-    parser.add_argument('--STS_scale', default=2.0, type=float,
-        help="scale factor for trade-off between STS and q score. Higher means more emphasis on STS.")
-
-    args = parser.parse_args()
-
-    if args.watermark_fn == 'fourier':
-        watermarkingFnClass = WatermarkingFnFourier
-    elif args.watermark_fn == 'square':
-        watermarkingFnClass = WatermarkingFnSquare
-    else:
-        # Add any other self-defined watermarking functions here
-        raise ValueError("Invalid watermarking function")
-
-    id = args.id
-    kappa = args.kappa
-    k_p = args.k_p
-    model_name_or_path = args.model
-    sts_model_name = args.sts_model
-    T_o = args.T_o
-    device = args.device
-    num_beam_groups = args.num_beam_groups
-    beams_per_group = args.beams_per_group
-    diversity_penalty = args.diversity_penalty
-    STS_scale = args.STS_scale
-
-    if args.T_o is None:
-        T_o = "Protecting intellectual property (IP) of text such as articles and code is increasingly important, especially as sophisticated attacks become possible, such as paraphrasing by large language models (LLMs) or even unauthorized training of LLMs on copyrighted text to infringe such IP. However, existing text watermarking methods are not robust enough against such attacks nor scalable to millions of users for practical implementation."
-    T_os = [T_o]    # Replace with your own list of texts to watermark
-
-    # Initialize tokenizer and model
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path,
-        device_map=device,
-        **model_from_pretrained_kwargs,
-        )
-
-    watermarker = Watermarker(tokenizer=tokenizer, model=model, id=id, kappa=kappa, k_p=k_p, watermarkingFnClass=watermarkingFnClass)
-
-    sts_model = SentenceTransformer(sts_model_name, device=device)
-
-    T_ws = watermark_texts(
-        T_os,
-        id=id, k_p=k_p, kappa=kappa,
-        watermarker=watermarker,
-        sts_model=sts_model,
-        beams_per_group=beams_per_group,
-        num_beam_groups=num_beam_groups,
-        diversity_penalty=diversity_penalty,
-        STS_scale=STS_scale,
-        use_tqdm=True,
-        )
-
-    # watermarker = Watermarker(tokenizer=tokenizer, model=None, id=id, k_p=k_p, watermarkingFnClass=watermarkingFnClass)   # If only verifying the watermark, do not need to instantiate the model
-    q_scores, extracted_k_ps = verify_texts(T_os + T_ws, id, watermarker, k_p=k_p, return_extracted_k_p=True)
-
-    for i in range(len(T_os)):
-        # Handle the case where this is being run
-        # in an IDE or something else without terminal size
-        try:
-            column_size = os.get_terminal_size().columns
-        except OSError:
-            column_size = 80
-
-        print("=" * column_size)
-
-        sts_score = STS_scorer(T_os[i], T_ws[i], sts_model)
-        pretty_print(
-            T_os[i], T_ws[i],
-            sts_score,
-            q_scores[i], q_scores[i + len(T_os)],
-            k_p, extracted_k_ps[i + len(T_os)],
-        )
+    cli_main()
 
 if __name__ == "__main__":
     main()

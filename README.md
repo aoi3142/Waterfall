@@ -126,7 +126,9 @@ watermark_strength = verify_texts(test_texts, id)     # np array of floats
 
 ## Code structure
 
-- `watermark.py`              : Sample watermarking script used by with `watermark_demo` command, includes beam search and other optimizations
+- `watermark.py`              : High-level watermarking and verification API
+- `cli.py`                    : Sample watermarking script used by the `waterfall_demo` command
+- `sts.py`                    : Semantic textual similarity scoring helpers
 - `WatermarkerBase.py`        : Underlying generation and verification code provided by `Watermarker` class
 - `WatermarkingFn.py`         : Abstract class `WatermarkingFn` for watermarking functions, inherit it to create new perturbation functions
 - `WatermarkingFnFourier.py`  : Fourier watermarking function `WatermarkingFnFourier` inherited from `WatermarkingFn`

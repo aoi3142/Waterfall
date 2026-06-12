@@ -35,7 +35,7 @@ Homepage = "https://github.com/aoi3142/Waterfall"
 Issues = "https://github.com/aoi3142/Waterfall/issues"
 
 [project.scripts]
-waterfall_demo = "waterfall.watermark:main"
+waterfall_demo = "waterfall.cli:main"
 
 [tool.setuptools]
 packages = ["waterfall"]
