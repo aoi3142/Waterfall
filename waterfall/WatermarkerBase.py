@@ -37,7 +37,7 @@ if transformers_version >= version.parse("4.48.0"):
 else:
     batch_encoding_to_kwargs = {}
 additional_generation_config: Dict[str, Any]= {}
-if transformers_version < version.parse("4.50.0") and transformers_version >= version.parse("4.50.0"):
+if transformers_version < version.parse("5.0.0") and transformers_version >= version.parse("4.50.0"):
     additional_generation_config["use_model_defaults"] = False
 # Set model loading kwargs based on transformers version
 if transformers_version >= version.parse("4.56.0"):
