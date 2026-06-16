@@ -1,3 +1,6 @@
+import os
+import copy
+
 import transformers
 from packaging import version
 import torch
@@ -17,6 +20,110 @@ if TYPE_CHECKING:
     from transformers.generation.streamers import BaseStreamer
 
 logger = logging.getLogger(__name__)
+
+def _batch_beam_indices(batch_indices: torch.LongTensor, num_beams: int) -> torch.LongTensor:
+    beam_offsets = torch.arange(num_beams, device=batch_indices.device)
+    return (batch_indices.unsqueeze(1) * num_beams + beam_offsets).reshape(-1)
+
+def _slice_tensor_batch_dim(value: torch.Tensor, indices: torch.LongTensor, old_batch_size: int) -> torch.Tensor:
+    if value.shape[0] == old_batch_size:
+        return value.index_select(0, indices.to(value.device))
+    return value
+
+def _slice_cache_tensor_batch_dim(value: torch.Tensor, indices: torch.LongTensor, old_batch_size: int) -> torch.Tensor:
+    if value.shape[0] == old_batch_size:
+        return value.index_select(0, indices.to(value.device))
+
+    matching_dims = [dim for dim, size in enumerate(value.shape) if size == old_batch_size]
+    if len(matching_dims) == 1:
+        return value.index_select(matching_dims[0], indices.to(value.device))
+
+    return value
+
+def _cache_index_device(cache, fallback: torch.device) -> torch.device:
+    if torch.is_tensor(cache):
+        return cache.device
+    if isinstance(cache, (tuple, list)):
+        for item in cache:
+            device = _cache_index_device(item, fallback)
+            if device != fallback:
+                return device
+    if isinstance(cache, dict):
+        for item in cache.values():
+            device = _cache_index_device(item, fallback)
+            if device != fallback:
+                return device
+    return fallback
+
+def _cache_layers_support(cache, method_name: str) -> bool:
+    layers = getattr(cache, "layers", None)
+    if layers is None:
+        return True
+    return all(hasattr(layer, method_name) for layer in layers)
+
+def _slice_cache(cache, indices: torch.LongTensor, old_batch_size: int):
+    if cache is None:
+        return cache
+    if hasattr(cache, "batch_select_indices") and _cache_layers_support(cache, "batch_select_indices"):
+        selected = cache.batch_select_indices(indices.to(_cache_index_device(cache, indices.device)))
+        return cache if selected is None else selected
+    if hasattr(cache, "reorder_cache") and _cache_layers_support(cache, "reorder_cache"):
+        selected = cache.reorder_cache(indices.to(_cache_index_device(cache, indices.device)))
+        return cache if selected is None else selected
+    if torch.is_tensor(cache):
+        return _slice_cache_tensor_batch_dim(cache, indices, old_batch_size)
+    if isinstance(cache, tuple):
+        return tuple(_slice_cache(item, indices, old_batch_size) for item in cache)
+    if isinstance(cache, list):
+        return [_slice_cache(item, indices, old_batch_size) for item in cache]
+    if isinstance(cache, dict):
+        return {key: _slice_cache(value, indices, old_batch_size) for key, value in cache.items()}
+    if hasattr(cache, "__dict__") and not isinstance(cache, torch.nn.Module):
+        sliced = copy.copy(cache)
+        for key, value in cache.__dict__.items():
+            setattr(sliced, key, _slice_cache(value, indices, old_batch_size))
+        return sliced
+    return cache
+
+def _reorder_cache_for_beam_step(model, cache, indices: torch.LongTensor):
+    if cache is None:
+        return cache
+    if hasattr(model, "_reorder_cache"):
+        try:
+            return model._reorder_cache(cache, indices)
+        except AttributeError:
+            pass
+    if hasattr(cache, "reorder_cache") and _cache_layers_support(cache, "reorder_cache"):
+        selected = cache.reorder_cache(indices.to(_cache_index_device(cache, indices.device)))
+        return cache if selected is None else selected
+    return _slice_cache(cache, indices, indices.shape[0])
+
+def _slice_model_kwargs_for_active_batches(
+    model_kwargs: dict,
+    active_batch_indices: torch.LongTensor,
+    new_active_batch_indices: torch.LongTensor,
+    num_beams: int,
+    keep_batch_positions: torch.LongTensor,
+) -> dict:
+    if new_active_batch_indices.shape[0] == active_batch_indices.shape[0]:
+        return model_kwargs
+
+    old_batch_size = active_batch_indices.shape[0]
+    old_flat_batch_size = old_batch_size * num_beams
+    keep_flat_positions = _batch_beam_indices(keep_batch_positions, num_beams)
+
+    sliced_kwargs = {}
+    for key, value in model_kwargs.items():
+        if key == "past_key_values":
+            sliced_kwargs[key] = _slice_cache(value, keep_flat_positions, old_flat_batch_size)
+        elif torch.is_tensor(value):
+            sliced_kwargs[key] = _slice_tensor_batch_dim(value, keep_flat_positions, old_flat_batch_size)
+        elif key == "encoder_outputs" and hasattr(value, "__class__"):
+            # Encoder outputs are already expanded to batch*num_beams by `generate`.
+            sliced_kwargs[key] = _slice_cache(value, keep_flat_positions, old_flat_batch_size)
+        else:
+            sliced_kwargs[key] = value
+    return sliced_kwargs
 
 class HammingDiversityLogitsProcessor(LogitsProcessor):
     r"""
@@ -141,15 +248,26 @@ class HammingDiversityLogitsProcessor(LogitsProcessor):
             return scores
 
         scores_processed = scores.clone()
-        for batch_idx in range(batch_size):
-            # predicted tokens of last time step of previous groups
-            previous_group_tokens = current_tokens[
-                batch_idx * self._num_beams : batch_idx * self._num_beams + group_start_idx
-            ]
-            token_frequency = torch.bincount(previous_group_tokens, minlength=vocab_size).to(scores.device)
-            scores_processed[batch_idx * group_size : (batch_idx + 1) * group_size] -= (
-                self._diversity_penalty * token_frequency
-            )
+        if os.environ.get("WATERFALL_DISABLE_VECTORIZED_DIVERSITY") == "1":
+            for batch_idx in range(batch_size):
+                # predicted tokens of last time step of previous groups
+                previous_group_tokens = current_tokens[
+                    batch_idx * self._num_beams : batch_idx * self._num_beams + group_start_idx
+                ]
+                token_frequency = torch.bincount(previous_group_tokens, minlength=vocab_size).to(scores.device)
+                scores_processed[batch_idx * group_size : (batch_idx + 1) * group_size] -= (
+                    self._diversity_penalty * token_frequency
+                )
+            return scores_processed
+
+        previous_group_tokens = current_tokens.view(batch_size, self._num_beams)[:, :group_start_idx]
+        token_frequency = scores.new_zeros((batch_size, vocab_size))
+        token_frequency.scatter_add_(
+            1,
+            previous_group_tokens,
+            torch.ones_like(previous_group_tokens, dtype=scores.dtype, device=scores.device),
+        )
+        scores_processed -= self._diversity_penalty * token_frequency.repeat_interleave(group_size, dim=0)
 
         return scores_processed
 
@@ -289,6 +407,13 @@ def _group_beam_search(
     )
     beam_scores[:, ::num_sub_beams] = 0
     beam_scores = beam_scores.view((batch_size * num_beams,))
+    full_input_ids = input_ids
+    full_beam_scores = beam_scores.clone()
+    active_batch_indices = torch.arange(batch_size, dtype=torch.long, device=device)
+    can_compact_finished_batches = not (
+        return_dict_in_generate
+        and (output_scores or output_logits or output_attentions or output_hidden_states)
+    )
 
     this_peer_finished = False
 
@@ -314,14 +439,15 @@ def _group_beam_search(
     while model._has_unfinished_sequences(
         this_peer_finished, synced_gpus, device=input_ids.device
     ):
+        active_batch_size = active_batch_indices.shape[0]
         # predicted tokens in cur_len step
         current_tokens = torch.zeros(
-            batch_size * num_beams, dtype=input_ids.dtype, device=device
+            active_batch_size * num_beams, dtype=input_ids.dtype, device=device
         )
 
         # indices which will form the beams in the next time step
         reordering_indices = torch.zeros(
-            batch_size * num_beams, dtype=torch.long, device=device
+            active_batch_size * num_beams, dtype=torch.long, device=device
         )
 
         if not is_transformers_geq_5_3_0 or prefill_consumed:
@@ -370,21 +496,28 @@ def _group_beam_search(
                 copy=True, device=input_ids.device
             )
 
+        active_batch_positions = torch.arange(active_batch_size, device=device)
+        pad_value = pad_token_id.item() if torch.is_tensor(pad_token_id) else pad_token_id
+        if pad_value is None:
+            pad_value = eos_token_id[0].item() if torch.is_tensor(eos_token_id) else 0
         for beam_group_idx in range(num_beam_groups):
             group_start_idx = beam_group_idx * num_sub_beams
             group_end_idx = min(group_start_idx + num_sub_beams, num_beams)
             group_size = group_end_idx - group_start_idx
 
             # indices of beams of current group among all sentences in batch
-            batch_group_indices = []
-
-            for batch_idx in range(batch_size):
-                batch_group_indices.extend(
-                    [
-                        batch_idx * num_beams + idx
-                        for idx in range(group_start_idx, group_end_idx)
-                    ]
-                )
+            if os.environ.get("WATERFALL_DISABLE_VECTORIZED_GROUP_INDICES") == "1":
+                batch_group_indices = []
+                for batch_idx in range(active_batch_size):
+                    batch_group_indices.extend(
+                        [
+                            batch_idx * num_beams + idx
+                            for idx in range(group_start_idx, group_end_idx)
+                        ]
+                    )
+            else:
+                group_offsets = torch.arange(group_start_idx, group_end_idx, device=device)
+                batch_group_indices = (active_batch_positions[:, None] * num_beams + group_offsets).reshape(-1)
             group_input_ids = input_ids[batch_group_indices]
 
             # select outputs of beams of current group only
@@ -405,6 +538,7 @@ def _group_beam_search(
                 current_tokens=current_tokens,
                 beam_group_idx=beam_group_idx,
             )
+
             next_token_scores = next_token_scores_processed + beam_scores[
                 batch_group_indices
             ].unsqueeze(-1)
@@ -419,7 +553,7 @@ def _group_beam_search(
             n_eos_tokens = eos_token_id.shape[0] if eos_token_id is not None else 0
             num_tokens_to_select = max(2, 1 + n_eos_tokens) * group_size
             next_token_scores = next_token_scores.view(
-                batch_size, group_size * vocab_size
+                active_batch_size, group_size * vocab_size
             )
             next_token_scores, next_tokens = torch.topk(
                 next_token_scores,
@@ -446,7 +580,9 @@ def _group_beam_search(
                 beam_indices=process_beam_indices,
                 group_index=beam_group_idx,
                 decoder_prompt_len=decoder_prompt_len,
+                batch_indices=active_batch_indices,
             )
+
             beam_scores[batch_group_indices] = beam_outputs["next_beam_scores"]
             beam_next_tokens = beam_outputs["next_beam_tokens"]
             beam_idx = beam_outputs["next_beam_indices"]
@@ -495,6 +631,16 @@ def _group_beam_search(
                 )
 
         input_ids = torch.cat([input_ids, current_tokens.unsqueeze(-1)], dim=-1)
+        full_current_tokens = torch.full(
+            (batch_size * num_beams,),
+            pad_value,
+            dtype=input_ids.dtype,
+            device=device,
+        )
+        active_flat_indices = _batch_beam_indices(active_batch_indices, num_beams)
+        full_current_tokens[active_flat_indices] = current_tokens
+        full_input_ids = torch.cat([full_input_ids, full_current_tokens.unsqueeze(-1)], dim=-1)
+        full_beam_scores[active_flat_indices] = beam_scores
 
         # This is needed to properly delete outputs.logits which may be very large for first iteration
         # Otherwise a reference to outputs is kept which keeps the logits alive in the next iteration
@@ -504,23 +650,43 @@ def _group_beam_search(
 
         # NOTE: we need to check if `model._reorder_cache` exists for special models like RAG, RecurrentGemma etc.
         if model_kwargs.get("past_key_values", None) is not None:
-            if hasattr(model, "_reorder_cache"):
-                model_kwargs["past_key_values"] = model._reorder_cache(
-                    model_kwargs["past_key_values"], reordering_indices
-                )
-            else:
-                model_kwargs["past_key_values"].reorder_cache(reordering_indices)
+            model_kwargs["past_key_values"] = _reorder_cache_for_beam_step(
+                model,
+                model_kwargs["past_key_values"],
+                reordering_indices,
+            )
 
         # increase cur_len
         cur_len = cur_len + 1
 
         if beam_scorer.is_done or all(stopping_criteria(input_ids, scores)):
             this_peer_finished = True
+        elif (
+            not synced_gpus
+            and can_compact_finished_batches
+            and os.environ.get("WATERFALL_DISABLE_FINISHED_BEAM_COMPACTION") != "1"
+        ):
+            done_by_batch = beam_scorer._done.view(batch_size, num_beam_groups).all(dim=1)
+            keep_active_mask = ~done_by_batch[active_batch_indices]
+            keep_batch_positions = torch.nonzero(keep_active_mask, as_tuple=False).squeeze(-1)
+            new_active_batch_indices = active_batch_indices[keep_active_mask]
+            if new_active_batch_indices.shape[0] != active_batch_indices.shape[0]:
+                keep_flat_positions = _batch_beam_indices(keep_batch_positions, num_beams)
+                input_ids = input_ids.index_select(0, keep_flat_positions)
+                beam_scores = beam_scores.index_select(0, keep_flat_positions)
+                model_kwargs = _slice_model_kwargs_for_active_batches(
+                    model_kwargs,
+                    active_batch_indices,
+                    new_active_batch_indices,
+                    num_beams,
+                    keep_batch_positions=keep_batch_positions,
+                )
+                active_batch_indices = new_active_batch_indices
 
     final_beam_indices = sum(beam_indices, ()) if beam_indices is not None else None
     sequence_outputs = beam_scorer.finalize(
-        input_ids,
-        beam_scores,
+        full_input_ids,
+        full_beam_scores,
         next_tokens,
         next_indices,
         pad_token_id=pad_token_id,

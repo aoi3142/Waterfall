@@ -308,12 +308,18 @@ class BeamSearchScorer(BeamScorer):
         beam_indices: Optional[torch.LongTensor] = None,
         group_index: Optional[int] = 0,
         decoder_prompt_len: Optional[int] = 0,
+        batch_indices: Optional[torch.LongTensor] = None,
     ) -> dict[str, torch.Tensor]:
         # add up to the length which the next_scores is calculated on (including decoder prompt)
         cur_len = input_ids.shape[-1] + 1
-        batch_size = len(self._beam_hyps) // self.num_beam_groups
+        total_batch_size = len(self._beam_hyps) // self.num_beam_groups
+        batch_size = input_ids.shape[0] // self.group_size
+        if batch_indices is None:
+            batch_indices = torch.arange(batch_size, device=input_ids.device)
+        else:
+            batch_indices = batch_indices.to(input_ids.device)
 
-        if batch_size != (input_ids.shape[0] // self.group_size):
+        if input_ids.shape[0] % self.group_size != 0:
             if self.num_beam_groups > 1:
                 raise ValueError(
                     f"A group beam size of {input_ids.shape[0]} is used as the input, but a group beam "
@@ -324,6 +330,12 @@ class BeamSearchScorer(BeamScorer):
                     f"A beam size of {input_ids.shape[0]} is used as the input, but a beam size of "
                     f"{self.group_size} is expected by the beam scorer."
                 )
+        if batch_indices.shape[0] != batch_size:
+            raise ValueError(
+                f"`batch_indices` has length {batch_indices.shape[0]}, but the compact batch size is {batch_size}."
+            )
+        if batch_indices.numel() > 0 and (batch_indices.max().item() >= total_batch_size or batch_indices.min().item() < 0):
+            raise ValueError("`batch_indices` contains an out-of-range original batch index.")
 
         device = input_ids.device
         next_beam_scores = torch.zeros((batch_size, self.group_size), dtype=next_scores.dtype, device=device)
@@ -333,10 +345,36 @@ class BeamSearchScorer(BeamScorer):
         if eos_token_id is not None and not isinstance(eos_token_id, torch.Tensor):
             if isinstance(eos_token_id, int):
                 eos_token_id = [eos_token_id]
-            eos_token_id = torch.tensor(eos_token_id)
+            eos_token_id = torch.tensor(eos_token_id, device=device)
+        elif isinstance(eos_token_id, torch.Tensor):
+            eos_token_id = eos_token_id.to(device)
+
+        batch_group_indices = batch_indices * self.num_beam_groups + group_index
+        top_next_tokens = next_tokens[:, : self.group_size]
+        has_eos_in_top_beams = (
+            False
+            if eos_token_id is None
+            else torch.isin(top_next_tokens, eos_token_id).any().item()
+        )
+        has_done_batch = self._done[batch_group_indices].any().item()
+
+        if not has_done_batch and not has_eos_in_top_beams:
+            batch_offsets = (
+                torch.arange(batch_size, device=device).unsqueeze(1) * self.group_size
+            )
+            next_beam_scores = next_scores[:, : self.group_size]
+            next_beam_tokens = top_next_tokens
+            next_beam_indices = batch_offsets + next_indices[:, : self.group_size]
+            return UserDict(
+                {
+                    "next_beam_scores": next_beam_scores.reshape(-1),
+                    "next_beam_tokens": next_beam_tokens.reshape(-1),
+                    "next_beam_indices": next_beam_indices.reshape(-1),
+                }
+            )
 
         for batch_idx in range(batch_size):
-            batch_group_idx = batch_idx * self.num_beam_groups + group_index
+            batch_group_idx = batch_group_indices[batch_idx].item()
             if self._done[batch_group_idx]:
                 if self.num_beams < len(self._beam_hyps[batch_group_idx]):
                     raise ValueError(f"Batch can only be done if at least {self.num_beams} beams have been generated")
@@ -390,9 +428,10 @@ class BeamSearchScorer(BeamScorer):
                 )
 
             # Check if we are done so that we can save a pad step if all(done)
-            self._done[batch_group_idx] = self._done[batch_group_idx] or self._beam_hyps[batch_group_idx].is_done(
-                next_scores[batch_idx].max().item(), cur_len, decoder_prompt_len
-            )
+            if len(self._beam_hyps[batch_group_idx]) >= self.group_size:
+                self._done[batch_group_idx] = self._done[batch_group_idx] or self._beam_hyps[batch_group_idx].is_done(
+                    next_scores[batch_idx].max().item(), cur_len, decoder_prompt_len
+                )
 
         return UserDict(
             {
